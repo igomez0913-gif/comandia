@@ -42,7 +42,7 @@ const slug = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toL
 const seriesLabel = (s) => `${s.code === s.name ? s.name : `${s.code} · ${s.name}`} · siguiente ${s.current}`;
 const pill = (s) => `<span class="pill ${slug(s)}">${esc(s)}</span>`;
 const can = (...perms) => !!user && perms.some((p) => (user.permissions || []).includes(p));
-const NAV_PERMS = { bodegas: ["inventario", "catalogo"], catalogo: ["catalogo"], proveedores: ["compras"], bancos: ["bancos"], reportes: ["reportes"], config: ["config", "usuarios"], cxc: ["cobrar", "reportes"], caja: ["cobrar", "reportes"], bitacora: ["bitacora"], cxp: ["compras", "bancos"], conteo: ["inventario"], reabastecer: ["compras"], etiquetas: ["catalogo", "inventario"], };
+const NAV_PERMS = { salon: ["mesas"], cocina: ["cocina", "mesas"], restaurante: ["salones", "catalogo", "config", "inventario", "ver_costos"], bodegas: ["inventario", "catalogo"], catalogo: ["catalogo"], proveedores: ["compras"], bancos: ["bancos"], reportes: ["reportes"], config: ["config", "usuarios"], cxc: ["cobrar", "reportes"], caja: ["cobrar", "reportes"], bitacora: ["bitacora"], cxp: ["compras", "bancos"], conteo: ["inventario"], reabastecer: ["compras"], etiquetas: ["catalogo", "inventario"], };
 // Vistas que piden TODOS sus permisos (no solo uno): el punto de venta factura y cobra a la vez.
 const NAV_ALL = { pos: ["facturar", "cobrar"] };
 const canAll = (...perms) => perms.every((p) => can(p));
@@ -72,6 +72,8 @@ const redoDiscount = (l) => {
 };
 const TAX_LABEL = { gravado15: "ISV 15%", gravado18: "ISV 18%", exento: "Exento", exonerado: "Exonerado" };
 const TAX_OPTIONS = Object.entries(TAX_LABEL).map(([value, label]) => ({ value, label }));
+const KIND_OPTIONS = [["producto", "Producto (se compra y se vende)"], ["platillo", "Platillo (se vende, con receta)"], ["insumo", "Insumo (ingrediente)"], ["elaborado", "Elaborado (se prepara)"]].map(([value, label]) => ({ value, label }));
+const STATION_OPTIONS = [["", "Ninguna"], ["cocina", "Cocina"], ["barra", "Barra"], ["parrilla", "Parrilla"], ["postres", "Postres"], ["otra", "Otra"]].map(([value, label]) => ({ value, label }));
 const when = (iso) => {
   if (!iso) return "";
   const d = new Date(iso);
@@ -584,12 +586,16 @@ async function boot() {
     const logo = $("#co-logo");
     if (settings.logo) { logo.src = settings.logo; logo.classList.remove("hidden"); } else logo.classList.add("hidden");
     if (!canView(view)) view = "inicio";
+    const home = typeof homeViewFor === "function" ? homeViewFor(user) : null;
+    if (home && view === "inicio") view = home;  // el mesero entra al salón y la cocina a su pantalla
+    $$(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
     await render();
   } catch (err) { /* si la sesión expiró api() ya volvió al login */ }
 }
 
 async function render() {
   const root = $("#view");
+  (window.viewCleanup || []).splice(0).forEach((stop) => { try { stop(); } catch (e) { /* nada */ } });  // detiene los temporizadores de la pantalla anterior
   root.innerHTML = `<p class="muted">Cargando...</p>`;
   const q = pendingQuery; pendingQuery = "";
   try {
@@ -597,7 +603,7 @@ async function render() {
     const views = {
       inicio: renderHome, ventas: (r) => renderDocs(r, ""), cxc: (r) => renderDocs(r, "cxc"), inventario: (r) => renderProducts(r, q),
       bodegas: renderWarehouses, catalogo: renderCatalog, clientes: (r) => renderClients(r, q), proveedores: renderSuppliers,
-      bancos: renderBanks, reportes: renderReports, config: renderSettings, caja: renderCashClose, bitacora: renderAudit, pos: renderPos, cxp: renderPayables, conteo: renderCounts, etiquetas: renderLabels, reabastecer: renderReplenish,
+      bancos: renderBanks, reportes: renderReports, config: renderSettings, caja: renderCashClose, bitacora: renderAudit, pos: renderPos, cxp: renderPayables, conteo: renderCounts, etiquetas: renderLabels, reabastecer: renderReplenish, salon: renderSalon, cocina: renderKitchen, restaurante: renderRestaurant,
     };
     await (views[view] || renderHome)(root);
   } catch (err) { root.innerHTML = `<div class="card"><p>${esc(err.message)}</p></div>`; }
@@ -1282,6 +1288,8 @@ async function productForm(p) {
     <label>Categoría<select name="category_id">${catOptions(deptId, p?.category_id)}</select></label>
     ${fieldHtml({ name: "base_unit", label: "Unidad base", value: p?.base_unit || "und", required: true })}
     ${fieldHtml({ name: "tax_treatment", label: "ISV", type: "select", options: TAX_OPTIONS, value: p?.tax_treatment || "gravado15" })}
+    ${fieldHtml({ name: "kind", label: "Tipo", type: "select", options: KIND_OPTIONS, value: p?.kind || "producto", hint: "Platillo: se vende y su receta descuenta insumos. Insumo: ingrediente que se compra. Elaborado: se prepara con una orden de preparación." })}
+    ${fieldHtml({ name: "station", label: "Estación de preparación", type: "select", options: STATION_OPTIONS, value: p?.station || "" })}
     ${fieldHtml({ name: "cost", label: "Costo (por unidad base)", type: "number", step: "0.01", min: 0, value: p?.cost ?? 0 })}
     <div class="full price-grid"><h4>Precios por unidad base</h4><p class="muted">Deja en 0 un precio que no uses: se cobra el precio ${esc(priceNames[0])}.</p>
       <div class="price-row">${priceNames.map((name, i) => `<label>${i + 1} · ${esc(name)}<input name="${i ? "price_" + (i + 1) : "price"}" type="number" step="0.01" min="0" value="${p ? (i ? p["price_" + (i + 1)] : p.price) : 0}" /></label>`).join("")}</div></div>
@@ -1291,7 +1299,7 @@ async function productForm(p) {
     const f = Object.fromEntries(new FormData(form).entries());
     const presentations = presents.map((x) => ({ id: x.id ?? null, name: x.name, unit: x.unit, factor: num(x.factor), price: num(x.price), price_2: num(x.price_2), price_3: num(x.price_3), price_4: num(x.price_4), barcode: x.barcode || "" }));
     if (presentations.some((x) => !x.name || !x.unit || x.factor <= 0)) throw new Error("Cada presentación necesita nombre, unidad y un factor mayor a cero");
-    const body = { sku: f.sku, name: f.name, department_id: +f.department_id, category_id: +f.category_id, base_unit: f.base_unit, cost: num(f.cost), price: num(f.price), price_2: num(f.price_2), price_3: num(f.price_3), price_4: num(f.price_4), min_stock: num(f.min_stock), tax_treatment: f.tax_treatment, presentations };
+    const body = { sku: f.sku, name: f.name, department_id: +f.department_id, category_id: +f.category_id, base_unit: f.base_unit, cost: num(f.cost), price: num(f.price), price_2: num(f.price_2), price_3: num(f.price_3), price_4: num(f.price_4), min_stock: num(f.min_stock), tax_treatment: f.tax_treatment, kind: f.kind || "producto", station: f.station || "", presentations };
     await api(p ? "/api/products/" + p.id : "/api/products", { method: p ? "PUT" : "POST", body });
     toast(p ? "Producto actualizado" : "Producto creado");
   }, {
@@ -2277,6 +2285,7 @@ async function renderSettings(root) {
     <label>Correo<input name="email" value="${esc(s.email)}" /></label>
     <label>Moneda<input name="currency" value="${esc(s.currency)}" /></label>
     <label>Cerrar la sesión por inactividad (minutos, 0 = nunca)<input name="idle_minutes" type="number" min="0" max="720" value="${s.idle_minutes ?? 30}" /></label>
+    <label class="full check"><input type="checkbox" name="prices_include_tax" ${s.prices_include_tax ? "checked" : ""} /> Los precios de venta <strong>incluyen el ISV</strong> (restaurantes): el precio del menú es lo que paga el cliente y el sistema separa el impuesto.</label>
     <label class="full check"><input type="checkbox" name="pos_enabled" ${s.pos_enabled === false ? "" : "checked"} /> Usar el <strong>Punto de venta</strong> (pantalla de mostrador). Si lo desactivas, se factura desde <em>Ventas › Nueva factura</em>. Para vender sin conexión hace falta tenerlo activo.</label>
     <div class="full price-grid"><h4>Nombres de los 4 precios</h4><p class="muted">Cada producto tiene hasta 4 precios y cada cliente usa uno. Sin el permiso de precio libre, el personal solo elige entre estos.</p>
       <div class="price-row">${(s.price_names || priceNames).map((n, i) => `<label>Precio ${i + 1}<input name="price_name_${i + 1}" value="${esc(n)}" required maxlength="40" /></label>`).join("")}</div></div>
@@ -2318,7 +2327,7 @@ function bindConfig(s) {
       const f = Object.fromEntries(new FormData(e.target).entries());
       const names = [1, 2, 3, 4].map((n) => (f["price_name_" + n] || "").trim());
       [1, 2, 3, 4].forEach((n) => delete f["price_name_" + n]);
-      await api("/api/settings", { method: "PUT", body: { ...f, pos_enabled: !!f.pos_enabled, idle_minutes: f.idle_minutes === "" || f.idle_minutes === undefined ? null : +f.idle_minutes, price_names: names } });
+      await api("/api/settings", { method: "PUT", body: { ...f, prices_include_tax: !!f.prices_include_tax, pos_enabled: !!f.pos_enabled, idle_minutes: f.idle_minutes === "" || f.idle_minutes === undefined ? null : +f.idle_minutes, price_names: names } });
       const file = $("#logo-file").files[0];
       if (file) {
         const body = new FormData(); body.append("file", file);

@@ -146,6 +146,11 @@ def open_tab_of_table(db: Session, table_id: int) -> Optional[Tab]:
             .filter(TabTable.table_id == table_id, Tab.status == "Abierta").first())
 
 
+def _minutes(since) -> int:
+    """Minutos transcurridos, calculados aquí: las fechas del sistema son de Honduras y el navegador de quien mira podría estar en otra zona."""
+    return max(0, int((now_local() - since).total_seconds() // 60)) if since else 0
+
+
 def tab_total(t: Tab) -> float:
     return round(sum(float(ln.qty) * float(ln.unit_price) for ln in t.lines if ln.status in ACTIVE_LINE), 2)
 
@@ -154,7 +159,7 @@ def _item_out(db: Session, it: FloorItem) -> dict:
     out = {"id": it.id, "kind": it.kind, "name": it.name, "shape": it.shape, "x": it.x, "y": it.y, "w": it.w, "h": it.h, "rotation": it.rotation, "seats": it.seats}
     if it.kind == "mesa":
         t = open_tab_of_table(db, it.id)
-        out["tab"] = {"id": t.id, "number": t.number, "total": tab_total(t), "waiter": t.waiter_name, "guests": t.guests, "opened_at": t.opened_at.isoformat(),
+        out["tab"] = {"id": t.id, "number": t.number, "total": tab_total(t), "waiter": t.waiter_name, "guests": t.guests, "opened_at": t.opened_at.isoformat(), "minutes": _minutes(t.opened_at),
                       "pending": sum(1 for ln in t.lines if ln.status == "nueva"), "tables": [x.table_id for x in t.tables]} if t else None
     return out
 
@@ -262,13 +267,13 @@ def save_layout(sid: int, body: LayoutIn, db: Session = Depends(get_db), user: U
 def _line_out(ln: TabLine) -> dict:
     return {"id": ln.id, "product_id": ln.product_id, "sku": ln.product.sku if ln.product else "", "description": ln.description, "qty": float(ln.qty),
             "unit_price": money(ln.unit_price), "total": round(float(ln.qty) * float(ln.unit_price), 2), "station": ln.station, "guest": ln.guest,
-            "descriptives": ln.descriptives, "note": ln.note, "status": ln.status, "created_by": ln.created_by,
+            "descriptives": ln.descriptives, "note": ln.note, "status": ln.status, "kds": ln.kds_status if ln.status == "enviada" else None, "created_by": ln.created_by,
             "sent_at": ln.sent_at.isoformat() if ln.sent_at else None, "void_reason": ln.void_reason, "document_id": ln.document_id}
 
 
 def _tab_out(db: Session, t: Tab, detail: bool = True) -> dict:
     out = {"id": t.id, "number": t.number, "name": t.name, "guests": t.guests, "status": t.status, "waiter": t.waiter_name, "waiter_id": t.waiter_id,
-           "opened_at": t.opened_at.isoformat() if t.opened_at else None, "closed_at": t.closed_at.isoformat() if t.closed_at else None,
+           "opened_at": t.opened_at.isoformat() if t.opened_at else None, "minutes": _minutes(t.opened_at), "closed_at": t.closed_at.isoformat() if t.closed_at else None,
            "tables": [{"id": x.table_id, "name": x.table.name if x.table else "", "salon_id": x.table.salon_id if x.table else None} for x in t.tables],
            "total": tab_total(t), "lines_count": sum(1 for ln in t.lines if ln.status in ACTIVE_LINE), "pending": sum(1 for ln in t.lines if ln.status == "nueva"),
            "client_id": t.client_id, "warehouse_id": t.warehouse_id, "notes": t.notes or ""}
@@ -480,6 +485,24 @@ def send_to_kitchen(tid: int, db: Session = Depends(get_db), user: User = Depend
     cocina.print_comandas(db, made)  # un fallo de impresión no frena el pedido: queda en la pantalla de cocina y se puede reimprimir
     mesas = ", ".join(x.table.name for x in t.tables if x.table)
     return {"tab": _tab_out(db, t), "comandas": [{**cocina._comanda_out(c), "sent_at": now.isoformat(), "lines": grouped[c.station]} for c in made]}
+
+
+class GuestsIn(BaseModel):
+    guests: int = Field(ge=1, le=100)
+    name: str = Field(default="", max_length=120)
+
+
+@app.put("/api/tabs/{tid}/guests")
+def update_guests(tid: int, body: GuestsIn, db: Session = Depends(get_db), user: User = Depends(require("mesas"))):
+    """Cambia cuántos comensales hay y a nombre de quién va la cuenta. No se pueden quitar comensales que ya tienen consumos."""
+    t = _get_tab(db, tid, lock=True)
+    _need_open(t)
+    used = max([ln.guest for ln in t.lines if ln.status in ACTIVE_LINE + ("cobrada",)] or [1])
+    if body.guests < used:
+        raise HTTPException(400, f"El comensal {used} ya tiene consumos: pásalos a otro antes de bajar a {body.guests}")
+    t.guests, t.name = body.guests, body.name.strip()
+    db.commit()
+    return _tab_out(db, t)
 
 
 class MoveIn(BaseModel):

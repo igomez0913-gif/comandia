@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest>=8
 httpx>=0.27
+playwright>=1.40  # opcional: pruebas de interfaz en un navegador real (se omiten si no está instalado)

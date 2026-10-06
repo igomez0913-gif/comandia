@@ -76,3 +76,17 @@ def test_ordenes_de_compra_simultaneas_no_repiten_numero(client, auth):
     [t.join() for t in threads]
     numbers = [n for c, n in codes if c == 200]
     assert len(numbers) == 8 and len(set(numbers)) == 8
+
+
+def test_la_politica_de_seguridad_permite_el_script_de_tema_de_la_pagina(client):
+    """El único script en línea de index.html (el tema oscuro) va permitido por su huella: si se edita sin actualizar la huella, el navegador lo bloquea."""
+    import base64
+    import hashlib
+    import os
+    import re
+    from app.main import STATIC_DIR
+    html = open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8").read()
+    inline = re.findall(r"<script>(.*?)</script>", html, re.S)
+    assert len(inline) == 1  # cualquier otro script en línea quedaría bloqueado
+    digest = base64.b64encode(hashlib.sha256(inline[0].encode("utf-8")).digest()).decode()
+    assert f"'sha256-{digest}'" in client.get("/").headers["content-security-policy"]

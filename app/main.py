@@ -1741,7 +1741,10 @@ def startup():
     add_missing_indexes(engine)
     db = SessionLocal()
     try:
-        seed(db)
+        if db.query(User).first() is None and os.environ.get("COMANDIA_DEMO", "restaurante") == "restaurante":
+            from app.demo_restaurante import seed_restaurante  # una base vacía arranca con un restaurante de demostración
+            seed_restaurante(db)
+        seed(db)  # no hace nada si ya hay usuarios; con COMANDIA_DEMO=comercio carga la demostración antigua de ferretería (la usan las pruebas)
         migrate_users(db)
         encrypt_stored_secrets(db)
         default_store(db)
@@ -5625,7 +5628,7 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     # Solo código propio (más el pequeño script del tema oscuro, por su huella): una página inyectada no puede cargar nada de afuera.
-    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'sha256-v4rmsE+TKlbPyk2Mih2NjULNBC4kH6yhO3T81NpBIMo='; style-src 'self' 'unsafe-inline'; "
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'sha256-SXdPVMmKZKp67Rc6PJZGxB3+4ipVYl3nkAzg446b4dg='; style-src 'self' 'unsafe-inline'; "
                                "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob: about:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
 }
 

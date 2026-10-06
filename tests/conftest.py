@@ -8,6 +8,7 @@ import pytest
 _tmp = tempfile.mkdtemp(prefix="comandia-test-")
 # TEST_DATABASE_URL permite correr la misma batería contra MySQL/MariaDB (usa una base de ensayo: se borra y recrea).
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or f"sqlite:///{os.path.join(_tmp, 'test.db')}"
+os.environ["COMANDIA_DEMO"] = "comercio"  # las pruebas viejas usan la demostración de ferretería; las del restaurante la crean ellas
 os.environ["COMANDIA_BACKUP_SCHEDULER"] = "0"  # el respaldo diario en segundo plano no corre durante las pruebas
 os.environ["COMANDIA_BACKUP_DIR"] = os.path.join(_tmp, "respaldos")
 os.environ["COMANDIA_LOGS"] = os.path.join(_tmp, "logs")  # los registros de las pruebas no ensucian la carpeta real

@@ -358,3 +358,24 @@ def test_sin_el_ajuste_el_impuesto_se_suma_como_siempre(client, auth, rest):
     client.post(f"/api/tabs/{t['id']}/send", headers=auth)
     doc = client.post(f"/api/tabs/{t['id']}/pay", json={"payments": pay_all(115)}, headers=auth).json()["document"]
     assert doc["total"] == 115 and doc["gravado_15"] == 100 and doc["isv_15"] == 15
+
+
+def test_cambiar_comensales_y_nombre_de_la_cuenta(client, auth, rest):
+    t = open_tab(client, auth, rest, guests=3)
+    add(client, auth, t, rest["cola"], 1, guest=3)
+    r = client.put(f"/api/tabs/{t['id']}/guests", json={"guests": 5, "name": "Sra. Gómez"}, headers=auth)
+    assert r.status_code == 200 and r.json()["guests"] == 5 and r.json()["name"] == "Sra. Gómez"
+    bad = client.put(f"/api/tabs/{t['id']}/guests", json={"guests": 2}, headers=auth)
+    assert bad.status_code == 400 and "comensal 3" in bad.json()["detail"]  # el 3 ya tiene consumos
+    assert client.put(f"/api/tabs/{t['id']}/guests", json={"guests": 0}, headers=auth).status_code == 422
+
+
+def test_la_cuenta_informa_los_minutos_y_el_estado_de_cocina(client, auth, rest):
+    t = open_tab(client, auth, rest)
+    assert t["minutes"] == 0 and client.get("/api/salons", headers=auth).json()[0]["items"][0]["tab"]["minutes"] == 0
+    add(client, auth, t, rest["cola"], 1)
+    sent = client.post(f"/api/tabs/{t['id']}/send", headers=auth).json()["tab"]
+    assert sent["lines"][0]["kds"] == "pendiente"
+    lid = sent["lines"][0]["id"]
+    client.put(f"/api/kitchen/lines/{lid}/status", json={"status": "listo"}, headers=auth)
+    assert client.get(f"/api/tabs/{t['id']}", headers=auth).json()["lines"][0]["kds"] == "listo"

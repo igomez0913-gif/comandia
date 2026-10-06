@@ -37,16 +37,19 @@
     <aside class="sidebar">
       <div class="brand"><div class="logo">V</div><div><h1>Comandia</h1><p>Gestión comercial · v3.4.4</p></div></div>
       <div class="nav-label">GESTIÓN</div>
-      <button class="nav-btn active" data-view="inicio">Inicio</button>
+      <button class="nav-btn active" data-view="inicio" data-perm="reportes facturar cobrar compras bancos config usuarios inventario catalogo ver_costos">Inicio</button>
+      <button class="nav-btn" data-view="salon" data-perm="mesas">Salón</button>
+      <button class="nav-btn" data-view="cocina" data-perm="cocina mesas">Cocina y barra</button>
+      <button class="nav-btn" data-view="restaurante" data-perm="salones catalogo config inventario ver_costos">Restaurante</button>
       <button class="nav-btn" data-view="pos" data-perm-all="facturar cobrar">Punto de venta</button>
-      <button class="nav-btn" data-view="ventas">Ventas <i class="badge" id="badge-sales">0</i></button>
-      <button class="nav-btn" data-view="inventario">Inventario</button>
+      <button class="nav-btn" data-view="ventas" data-perm="cotizar facturar cobrar anular reportes">Ventas <i class="badge" id="badge-sales">0</i></button>
+      <button class="nav-btn" data-view="inventario" data-perm="inventario catalogo compras ver_costos">Inventario</button>
       <button class="nav-btn" data-view="bodegas" data-perm="inventario catalogo">Bodegas</button>
       <button class="nav-btn" data-view="conteo" data-perm="inventario">Conteo físico</button>
       <button class="nav-btn" data-view="reabastecer" data-perm="compras">Reabastecer</button>
       <button class="nav-btn" data-view="etiquetas" data-perm="catalogo inventario">Etiquetas</button>
       <button class="nav-btn" data-view="catalogo" data-perm="catalogo">Dept. y categorías</button>
-      <button class="nav-btn" data-view="clientes">Clientes</button>
+      <button class="nav-btn" data-view="clientes" data-perm="clientes facturar cobrar">Clientes</button>
       <button class="nav-btn" data-view="proveedores" data-perm="compras">Proveedores</button>
       <button class="nav-btn" data-view="cxc" data-perm="cobrar reportes">Cuentas por cobrar <i class="badge" id="badge-cxc">0</i></button>
       <button class="nav-btn" data-view="cxp" data-perm="compras bancos">Cuentas por pagar</button>
@@ -98,6 +101,9 @@
   <script src="/static/app.js?v=3.4.4"></script>
   <script src="/static/etiquetas.js?v=3.4.4"></script>
   <script src="/static/modulos.js?v=3.4.4"></script>
+  <script src="/static/salon.js?v=3.4.4"></script>
+  <script src="/static/cocina.js?v=3.4.4"></script>
+  <script src="/static/restaurante.js?v=3.4.4"></script>
   <script src="/static/atajos.js?v=3.4.4"></script>
 </body>
 </html>
