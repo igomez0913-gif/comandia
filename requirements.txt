@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+sqlalchemy==2.0.36
+pymysql==1.1.1
+python-jose==3.3.0
+passlib==1.7.4
+bcrypt==4.2.1
+python-multipart==0.0.20
+fpdf2==2.8.9
+openpyxl==3.1.5
+cryptography>=42,<60

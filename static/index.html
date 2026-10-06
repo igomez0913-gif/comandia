@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Comandia · Gestión comercial</title>
+  <link rel="icon" href="data:," />
+  <meta name="theme-color" content="#12442f" />
+  <script>try { if (localStorage.getItem("comandia_theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}</script>
+  <link rel="stylesheet" href="/static/styles.css?v=3.4.4" />
+</head>
+<body>
+  <section id="login" class="login">
+    <div class="card login-card">
+      <div class="login-company hidden" id="login-company"><img id="login-logo" alt="Logo de la empresa" /></div>
+      <div class="brand" id="login-brand">
+        <div class="logo">V</div>
+        <div><h1>Comandia</h1><p>Gestión comercial</p></div>
+      </div>
+      <h2>Ingresar</h2>
+      <p class="muted" id="login-sub">Comandia · Gestión comercial</p>
+      <form id="login-form" class="form" style="margin-top:14px">
+        <label class="full">Correo<input id="email" value="luis@miempresa.hn" autocomplete="username" /></label>
+        <label class="full">Clave<input id="password" type="password" autocomplete="current-password" /></label>
+        <button class="btn primary full" type="submit">Entrar</button>
+        <p id="login-error" class="form-error full" role="alert"></p>
+      </form>
+      <p class="login-powered hidden" id="login-powered"><span class="logo mini-logo">V</span> Comandia · Gestión comercial</p>
+      <footer class="maker login-maker">
+        <strong>Ing. Israel Gómez</strong>
+        <span>Soluciones Tecnológicas HN · © 3360-8219</span>
+      </footer>
+    </div>
+  </section>
+
+  <div id="shell" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand"><div class="logo">V</div><div><h1>Comandia</h1><p>Gestión comercial · v3.4.4</p></div></div>
+      <div class="nav-label">GESTIÓN</div>
+      <button class="nav-btn active" data-view="inicio">Inicio</button>
+      <button class="nav-btn" data-view="pos" data-perm-all="facturar cobrar">Punto de venta</button>
+      <button class="nav-btn" data-view="ventas">Ventas <i class="badge" id="badge-sales">0</i></button>
+      <button class="nav-btn" data-view="remisiones" data-perm="facturar inventario">Guías de remisión</button>
+      <button class="nav-btn" data-view="inventario">Inventario</button>
+      <button class="nav-btn" data-view="bodegas" data-perm="inventario catalogo">Bodegas</button>
+      <button class="nav-btn" data-view="conteo" data-perm="inventario">Conteo físico</button>
+      <button class="nav-btn" data-view="reabastecer" data-perm="compras">Reabastecer</button>
+      <button class="nav-btn" data-view="etiquetas" data-perm="catalogo inventario">Etiquetas</button>
+      <button class="nav-btn" data-view="catalogo" data-perm="catalogo">Dept. y categorías</button>
+      <button class="nav-btn" data-view="clientes">Clientes</button>
+      <button class="nav-btn" data-view="proveedores" data-perm="compras">Proveedores</button>
+      <button class="nav-btn" data-view="cxc" data-perm="cobrar reportes">Cuentas por cobrar <i class="badge" id="badge-cxc">0</i></button>
+      <button class="nav-btn" data-view="cxp" data-perm="compras bancos">Cuentas por pagar</button>
+      <button class="nav-btn" data-view="caja" data-perm="cobrar reportes">Cierre de caja</button>
+      <button class="nav-btn" data-view="bancos" data-perm="bancos">Bancos</button>
+      <button class="nav-btn" data-view="reportes" data-perm="reportes">Reportes</button>
+      <div class="nav-label" data-perm="config usuarios bitacora">SISTEMA</div>
+      <button class="nav-btn" data-view="config" data-perm="config usuarios">Configuración</button>
+      <button class="nav-btn" data-view="bitacora" data-perm="bitacora">Bitácora</button>
+      <div class="company-card">
+        <img id="co-logo" class="co-logo hidden" alt="Logo" />
+        <strong id="co-name">Mi empresa</strong>
+        <div class="muted" id="co-rif">RTN 08019999123456</div>
+      </div>
+      <footer class="maker">
+        <strong>Ing. Israel Gómez</strong>
+        <span>Soluciones Tecnológicas HN</span>
+        <span>© 3360-8219</span>
+      </footer>
+    </aside>
+    <main class="main">
+      <div class="topbar">
+        <div class="search">
+          <input id="global-search" placeholder="Buscar clientes, facturas, productos..." />
+          <span class="kbd">Ctrl K</span>
+          <div id="results" class="results"></div>
+        </div>
+        <button class="conn online" id="conn" type="button" title="Estado de la base de datos"><span class="conn-dot" aria-hidden="true"></span><span id="conn-text">BD en línea</span><span id="conn-pending" class="conn-badge hidden"></span></button><button class="plan-badge hidden" id="plan-badge" type="button" title="Licencia y módulos"></button><button class="plan-badge pill-btn hidden" id="mypin" type="button" title="PIN para autorizar descuentos de cajeros y vendedores">PIN</button><button class="plan-badge pill-btn" id="chpass" type="button" title="Cambiar mi clave">Clave</button>
+        <div class="userchip">
+          <div class="avatar" id="avatar">LM</div>
+          <div><strong id="uname">Luis Mendoza</strong><small id="urole">Administrador</small></div>
+          <button class="btn ghost sm hide-touch" id="help-keys" type="button" title="Atajos de teclado (F1)">Atajos</button><button class="btn ghost sm theme-btn" id="theme" type="button">Oscuro</button><button class="btn ghost sm" id="logout">Salir</button>
+        </div>
+      </div>
+      <div id="offline-banner" class="offline-banner hidden" role="status"></div>
+      <section id="view"></section>
+    </main>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <div id="modal" class="modal-back" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="section-head"><h3 id="modal-title">Nuevo</h3><button class="btn ghost" id="modal-close">Cerrar</button></div>
+      <form id="modal-form" class="form"></form>
+    </div>
+  </div>
+  <script src="/static/offline.js?v=3.4.4"></script>
+  <script src="/static/app.js?v=3.4.4"></script>
+  <script src="/static/etiquetas.js?v=3.4.4"></script>
+  <script src="/static/modulos.js?v=3.4.4"></script>
+  <script src="/static/atajos.js?v=3.4.4"></script>
+</body>
+</html>

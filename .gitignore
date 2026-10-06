@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+# Secretos y datos locales: nunca al repositorio
+.secret
+database.url
+comandia.db
+static/uploads/*
+!static/uploads/.gitkeep
+respaldos/
+dist/
+comandia.log
+herramientas/llaves/
+herramientas/claves-emitidas.csv
+.instalado
+logs/

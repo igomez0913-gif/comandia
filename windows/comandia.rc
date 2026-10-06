@@ -1,0 +1,27 @@
+#include <winver.h>
+1 ICON "comandia.ico"
+1 VERSIONINFO
+FILEVERSION 2,9,8,0
+PRODUCTVERSION 2,9,8,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040a04b0"
+    BEGIN
+      VALUE "CompanyName", "Soluciones Tecnologicas HN"
+      VALUE "FileDescription", "Comandia - Gestion comercial"
+      VALUE "FileVersion", "3.4.4"
+      VALUE "InternalName", "Comandia"
+      VALUE "LegalCopyright", "Ing. Israel Gomez"
+      VALUE "OriginalFilename", "Comandia.exe"
+      VALUE "ProductName", "Comandia"
+      VALUE "ProductVersion", "3.4.4"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x040a, 1200
+  END
+END
