@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS prep_orders (
   FOREIGN KEY(warehouse_id) REFERENCES warehouses (id)
 ) DEFAULT CHARSET=utf8mb4;
 
--- Tablas nuevas del salón: salones, plano, cuentas, pedidos y cobros
+-- Tablas nuevas del salón y la cocina: salones, plano, cuentas, pedidos, cobros, comandas e impresoras
 CREATE TABLE IF NOT EXISTS salons (
   id INTEGER NOT NULL AUTO_INCREMENT, 
   name VARCHAR(60) NOT NULL, 
@@ -98,6 +98,19 @@ CREATE TABLE IF NOT EXISTS floor_items (
   active INTEGER, 
   PRIMARY KEY (id), 
   FOREIGN KEY(salon_id) REFERENCES salons (id)
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS comandas (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  number VARCHAR(16) NOT NULL, 
+  tab_id INTEGER NOT NULL, 
+  station VARCHAR(20), 
+  created_at DATETIME, 
+  printed_at DATETIME, 
+  print_error VARCHAR(200), 
+  PRIMARY KEY (id), 
+  UNIQUE (number), 
+  FOREIGN KEY(tab_id) REFERENCES tabs (id)
 ) DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS tabs (
@@ -148,10 +161,15 @@ CREATE TABLE IF NOT EXISTS tab_lines (
   voided_by VARCHAR(120), 
   void_reason VARCHAR(200), 
   document_id INTEGER, 
+  comanda_id INTEGER, 
+  kds_status VARCHAR(12), 
+  ready_at DATETIME, 
+  served_at DATETIME, 
   PRIMARY KEY (id), 
   FOREIGN KEY(tab_id) REFERENCES tabs (id), 
   FOREIGN KEY(product_id) REFERENCES products (id), 
-  FOREIGN KEY(document_id) REFERENCES documents (id)
+  FOREIGN KEY(document_id) REFERENCES documents (id), 
+  FOREIGN KEY(comanda_id) REFERENCES comandas (id)
 ) DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS tab_settlements (
@@ -167,6 +185,15 @@ CREATE TABLE IF NOT EXISTS tab_settlements (
   PRIMARY KEY (id), 
   FOREIGN KEY(tab_id) REFERENCES tabs (id), 
   FOREIGN KEY(document_id) REFERENCES documents (id)
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS printers (
+  station VARCHAR(20) NOT NULL, 
+  host VARCHAR(64), 
+  port INTEGER, 
+  copies INTEGER, 
+  active INTEGER, 
+  PRIMARY KEY (station)
 ) DEFAULT CHARSET=utf8mb4;
 
 -- Tabla nueva: contadores de numeración (OC-, CT-, CF-...), para que varios usuarios a la vez no repitan número

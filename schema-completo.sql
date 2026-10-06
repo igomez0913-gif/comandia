@@ -1,5 +1,5 @@
 -- Comandia 3.4.4 · Esquema COMPLETO para MySQL 8 / MariaDB 10.4+ (generado de los modelos; no lo edites a mano).
--- Crea la base, el usuario, las 40 tablas con sus llaves foráneas, únicos e índices.
+-- Crea la base, el usuario, las 42 tablas con sus llaves foráneas, únicos e índices.
 -- Úsalo en una base NUEVA y vacía (una sola vez). Comandia, al iniciar, agrega los datos iniciales (usuario administrador, empresa, catálogos).
 -- Si ya tienes una base de una versión anterior NO uses este archivo: usa actualizar-db.bat / actualizar-db.sql.
 --
@@ -155,6 +155,16 @@ CREATE TABLE IF NOT EXISTS departments (
 	name VARCHAR(80) NOT NULL, 
 	PRIMARY KEY (id), 
 	UNIQUE (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- printers
+CREATE TABLE IF NOT EXISTS printers (
+	station VARCHAR(20) NOT NULL, 
+	host VARCHAR(64), 
+	port INTEGER, 
+	copies INTEGER, 
+	active INTEGER, 
+	PRIMARY KEY (station)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- salons
@@ -407,6 +417,20 @@ CREATE TABLE IF NOT EXISTS tabs (
 	FOREIGN KEY(client_id) REFERENCES clients (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- comandas
+CREATE TABLE IF NOT EXISTS comandas (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	number VARCHAR(16) NOT NULL, 
+	tab_id INTEGER NOT NULL, 
+	station VARCHAR(20), 
+	created_at DATETIME, 
+	printed_at DATETIME, 
+	print_error VARCHAR(200), 
+	PRIMARY KEY (id), 
+	UNIQUE (number), 
+	FOREIGN KEY(tab_id) REFERENCES tabs (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- payments
 CREATE TABLE IF NOT EXISTS payments (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -615,10 +639,15 @@ CREATE TABLE IF NOT EXISTS tab_lines (
 	voided_by VARCHAR(120), 
 	void_reason VARCHAR(200), 
 	document_id INTEGER, 
+	comanda_id INTEGER, 
+	kds_status VARCHAR(12), 
+	ready_at DATETIME, 
+	served_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(tab_id) REFERENCES tabs (id), 
 	FOREIGN KEY(product_id) REFERENCES products (id), 
-	FOREIGN KEY(document_id) REFERENCES documents (id)
+	FOREIGN KEY(document_id) REFERENCES documents (id), 
+	FOREIGN KEY(comanda_id) REFERENCES comandas (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- document_items

@@ -5652,6 +5652,6 @@ def service_worker():
                         headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
 
 
-from app import restaurante, salon  # noqa: E402,F401  (recetas, descriptivos, preparación y salón; usan lo definido arriba)
+from app import restaurante, salon, cocina  # noqa: E402,F401  (recetas, descriptivos, preparación y salón; usan lo definido arriba)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -97,6 +97,10 @@ class TabLine(Base):
     voided_by = Column(String(120), default="")
     void_reason = Column(String(200), default="")
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)  # la factura con la que se cobró
+    comanda_id = Column(Integer, ForeignKey("comandas.id"), nullable=True)  # la comanda con la que se envió a cocina o barra
+    kds_status = Column(String(12), default="pendiente")  # en la pantalla de cocina: pendiente, preparando, listo, servido
+    ready_at = Column(DateTime, nullable=True)
+    served_at = Column(DateTime, nullable=True)
     product = relationship("Product")
 
 
@@ -451,6 +455,8 @@ def void_line(tid: int, lid: int, body: VoidIn, db: Session = Depends(get_db), u
     ln.status, ln.voided_at, ln.voided_by, ln.void_reason = "anulada", now_local(), who.name, reason
     audit(db, user, "Anuló producto de la cuenta", f"{t.number} · {float(ln.qty):g} × {ln.description} · {reason}" + (f" · autorizó {who.name}" if who.id != user.id else ""), "cuenta", t.id)
     db.commit()
+    from app import cocina
+    cocina.notify_void(db, t, ln)  # avisa a la estación para que no lo prepare (o lo deje de preparar)
     return _tab_out(db, t)
 
 
@@ -467,11 +473,13 @@ def send_to_kitchen(tid: int, db: Session = Depends(get_db), user: User = Depend
     for ln in fresh:
         ln.status, ln.sent_at = "enviada", now
         grouped.setdefault(ln.station or "cocina", []).append(_line_out(ln))
-    audit(db, user, "Envió pedido a cocina", f"{t.number} · {len(fresh)} línea(s)", "cuenta", t.id)
+    from app import cocina  # se carga después que el salón
+    made = cocina.create_comandas(db, t, fresh, now)
+    audit(db, user, "Envió pedido a cocina", f"{t.number} · {len(fresh)} línea(s) · " + ", ".join(c.number for c in made), "cuenta", t.id)
     db.commit()
+    cocina.print_comandas(db, made)  # un fallo de impresión no frena el pedido: queda en la pantalla de cocina y se puede reimprimir
     mesas = ", ".join(x.table.name for x in t.tables if x.table)
-    return {"tab": _tab_out(db, t), "comandas": [{"station": st, "tab_number": t.number, "tables": mesas, "waiter": t.waiter_name, "sent_at": now.isoformat(), "lines": ls}
-                                                  for st, ls in grouped.items()]}
+    return {"tab": _tab_out(db, t), "comandas": [{**cocina._comanda_out(c), "sent_at": now.isoformat(), "lines": grouped[c.station]} for c in made]}
 
 
 class MoveIn(BaseModel):
