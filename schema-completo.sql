@@ -1,5 +1,5 @@
 -- Comandia 3.4.4 · Esquema COMPLETO para MySQL 8 / MariaDB 10.4+ (generado de los modelos; no lo edites a mano).
--- Crea la base, el usuario, las 34 tablas con sus llaves foráneas, únicos e índices.
+-- Crea la base, el usuario, las 40 tablas con sus llaves foráneas, únicos e índices.
 -- Úsalo en una base NUEVA y vacía (una sola vez). Comandia, al iniciar, agrega los datos iniciales (usuario administrador, empresa, catálogos).
 -- Si ya tienes una base de una versión anterior NO uses este archivo: usa actualizar-db.bat / actualizar-db.sql.
 --
@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS company (
 	grandfather_wh INTEGER, 
 	pos_enabled INTEGER, 
 	idle_minutes INTEGER, 
+	prices_include_tax INTEGER, 
 	backup_copy_dir VARCHAR(255), 
 	PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -152,6 +153,16 @@ CREATE TABLE IF NOT EXISTS counters (
 CREATE TABLE IF NOT EXISTS departments (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	name VARCHAR(80) NOT NULL, 
+	PRIMARY KEY (id), 
+	UNIQUE (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- salons
+CREATE TABLE IF NOT EXISTS salons (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	name VARCHAR(60) NOT NULL, 
+	sort_order INTEGER, 
+	active INTEGER, 
 	PRIMARY KEY (id), 
 	UNIQUE (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -304,6 +315,24 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX ix_documents_issued_kind ON documents (issued_at, kind);
 CREATE INDEX ix_documents_offline ON documents (offline_id);
 
+-- floor_items
+CREATE TABLE IF NOT EXISTS floor_items (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	salon_id INTEGER NOT NULL, 
+	kind VARCHAR(12), 
+	name VARCHAR(40), 
+	shape VARCHAR(12), 
+	x INTEGER, 
+	y INTEGER, 
+	w INTEGER, 
+	h INTEGER, 
+	rotation INTEGER, 
+	seats INTEGER, 
+	active INTEGER, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(salon_id) REFERENCES salons (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- inventory_counts
 CREATE TABLE IF NOT EXISTS inventory_counts (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -355,6 +384,27 @@ CREATE TABLE IF NOT EXISTS purchases (
 	UNIQUE (number), 
 	FOREIGN KEY(supplier_id) REFERENCES suppliers (id), 
 	FOREIGN KEY(warehouse_id) REFERENCES warehouses (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- tabs
+CREATE TABLE IF NOT EXISTS tabs (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	number VARCHAR(16) NOT NULL, 
+	name VARCHAR(120), 
+	guests INTEGER, 
+	status VARCHAR(10), 
+	warehouse_id INTEGER, 
+	client_id INTEGER, 
+	waiter_id INTEGER, 
+	waiter_name VARCHAR(120), 
+	notes VARCHAR(255), 
+	opened_at DATETIME, 
+	closed_at DATETIME, 
+	merged_into_id INTEGER, 
+	PRIMARY KEY (id), 
+	UNIQUE (number), 
+	FOREIGN KEY(warehouse_id) REFERENCES warehouses (id), 
+	FOREIGN KEY(client_id) REFERENCES clients (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- payments
@@ -432,6 +482,32 @@ CREATE TABLE IF NOT EXISTS supplier_payments (
 	PRIMARY KEY (id), 
 	FOREIGN KEY(purchase_id) REFERENCES purchases (id), 
 	FOREIGN KEY(bank_id) REFERENCES banks (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- tab_settlements
+CREATE TABLE IF NOT EXISTS tab_settlements (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	tab_id INTEGER NOT NULL, 
+	document_id INTEGER, 
+	tip NUMERIC(12, 2), 
+	tip_method VARCHAR(20), 
+	`lines` INTEGER, 
+	created_at DATETIME, 
+	user_id INTEGER, 
+	user_name VARCHAR(120), 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(tab_id) REFERENCES tabs (id), 
+	FOREIGN KEY(document_id) REFERENCES documents (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- tab_tables
+CREATE TABLE IF NOT EXISTS tab_tables (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	tab_id INTEGER NOT NULL, 
+	table_id INTEGER NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(tab_id) REFERENCES tabs (id), 
+	FOREIGN KEY(table_id) REFERENCES floor_items (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- inventory_count_lines
@@ -517,6 +593,32 @@ CREATE TABLE IF NOT EXISTS stocks (
 	CONSTRAINT uq_stock UNIQUE (product_id, warehouse_id), 
 	FOREIGN KEY(product_id) REFERENCES products (id), 
 	FOREIGN KEY(warehouse_id) REFERENCES warehouses (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- tab_lines
+CREATE TABLE IF NOT EXISTS tab_lines (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	tab_id INTEGER NOT NULL, 
+	product_id INTEGER NOT NULL, 
+	description VARCHAR(200), 
+	qty NUMERIC(12, 2), 
+	unit_price NUMERIC(12, 2), 
+	station VARCHAR(20), 
+	guest INTEGER, 
+	descriptives VARCHAR(255), 
+	note VARCHAR(200), 
+	status VARCHAR(10), 
+	created_at DATETIME, 
+	created_by VARCHAR(120), 
+	sent_at DATETIME, 
+	voided_at DATETIME, 
+	voided_by VARCHAR(120), 
+	void_reason VARCHAR(200), 
+	document_id INTEGER, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(tab_id) REFERENCES tabs (id), 
+	FOREIGN KEY(product_id) REFERENCES products (id), 
+	FOREIGN KEY(document_id) REFERENCES documents (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- document_items

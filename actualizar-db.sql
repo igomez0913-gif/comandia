@@ -73,6 +73,102 @@ CREATE TABLE IF NOT EXISTS prep_orders (
   FOREIGN KEY(warehouse_id) REFERENCES warehouses (id)
 ) DEFAULT CHARSET=utf8mb4;
 
+-- Tablas nuevas del salón: salones, plano, cuentas, pedidos y cobros
+CREATE TABLE IF NOT EXISTS salons (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  name VARCHAR(60) NOT NULL, 
+  sort_order INTEGER, 
+  active INTEGER, 
+  PRIMARY KEY (id), 
+  UNIQUE (name)
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS floor_items (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  salon_id INTEGER NOT NULL, 
+  kind VARCHAR(12), 
+  name VARCHAR(40), 
+  shape VARCHAR(12), 
+  x INTEGER, 
+  y INTEGER, 
+  w INTEGER, 
+  h INTEGER, 
+  rotation INTEGER, 
+  seats INTEGER, 
+  active INTEGER, 
+  PRIMARY KEY (id), 
+  FOREIGN KEY(salon_id) REFERENCES salons (id)
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS tabs (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  number VARCHAR(16) NOT NULL, 
+  name VARCHAR(120), 
+  guests INTEGER, 
+  status VARCHAR(10), 
+  warehouse_id INTEGER, 
+  client_id INTEGER, 
+  waiter_id INTEGER, 
+  waiter_name VARCHAR(120), 
+  notes VARCHAR(255), 
+  opened_at DATETIME, 
+  closed_at DATETIME, 
+  merged_into_id INTEGER, 
+  PRIMARY KEY (id), 
+  UNIQUE (number), 
+  FOREIGN KEY(warehouse_id) REFERENCES warehouses (id), 
+  FOREIGN KEY(client_id) REFERENCES clients (id)
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS tab_tables (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  tab_id INTEGER NOT NULL, 
+  table_id INTEGER NOT NULL, 
+  PRIMARY KEY (id), 
+  FOREIGN KEY(tab_id) REFERENCES tabs (id), 
+  FOREIGN KEY(table_id) REFERENCES floor_items (id)
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS tab_lines (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  tab_id INTEGER NOT NULL, 
+  product_id INTEGER NOT NULL, 
+  description VARCHAR(200), 
+  qty NUMERIC(12, 2), 
+  unit_price NUMERIC(12, 2), 
+  station VARCHAR(20), 
+  guest INTEGER, 
+  descriptives VARCHAR(255), 
+  note VARCHAR(200), 
+  status VARCHAR(10), 
+  created_at DATETIME, 
+  created_by VARCHAR(120), 
+  sent_at DATETIME, 
+  voided_at DATETIME, 
+  voided_by VARCHAR(120), 
+  void_reason VARCHAR(200), 
+  document_id INTEGER, 
+  PRIMARY KEY (id), 
+  FOREIGN KEY(tab_id) REFERENCES tabs (id), 
+  FOREIGN KEY(product_id) REFERENCES products (id), 
+  FOREIGN KEY(document_id) REFERENCES documents (id)
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS tab_settlements (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  tab_id INTEGER NOT NULL, 
+  document_id INTEGER, 
+  tip NUMERIC(12, 2), 
+  tip_method VARCHAR(20), 
+  `lines` INTEGER, 
+  created_at DATETIME, 
+  user_id INTEGER, 
+  user_name VARCHAR(120), 
+  PRIMARY KEY (id), 
+  FOREIGN KEY(tab_id) REFERENCES tabs (id), 
+  FOREIGN KEY(document_id) REFERENCES documents (id)
+) DEFAULT CHARSET=utf8mb4;
+
 -- Tabla nueva: contadores de numeración (OC-, CT-, CF-...), para que varios usuarios a la vez no repitan número
 CREATE TABLE IF NOT EXISTS counters (
   name VARCHAR(20) NOT NULL,
@@ -274,6 +370,7 @@ CALL comandia_add_column('purchases', 'supplier_invoice', 'VARCHAR(40) DEFAULT '
 CALL comandia_add_column('document_items', 'cost', 'DECIMAL(12,4) NULL');
 CALL comandia_add_column('products', 'kind', 'VARCHAR(12) DEFAULT ''producto''');
 CALL comandia_add_column('products', 'station', 'VARCHAR(20) DEFAULT ''''');
+CALL comandia_add_column('company', 'prices_include_tax', 'INTEGER DEFAULT 0');
 CALL comandia_add_column('documents', 'buyer_name', 'VARCHAR(180) DEFAULT ''''');
 CALL comandia_add_column('documents', 'buyer_rtn', 'VARCHAR(20) DEFAULT ''''');
 CALL comandia_add_column('cai_ranges', 'received_date', 'DATE NULL');
@@ -319,5 +416,5 @@ SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
    AND ((TABLE_NAME = 'audit_log' AND COLUMN_NAME = 'id')
         OR COLUMN_NAME IN ('ref_document_id', 'user_id', 'user_name', 'price_level', 'price_names', 'price_2', 'price_3', 'price_4',
                            'backup_enabled', 'backup_hour', 'backup_keep', 'backup_dir',
-                           'kind', 'station', 'exonerated', 'exo_registry', 'sag_registry', 'oce_number', 'smtp_host', 'received_date', 'discount', 'discount_auth', 'auth_pin', 'credit_limit', 'block_overdue', 'credit_auth', 'offline_id', 'install_id'))
+                           'kind', 'station', 'prices_include_tax', 'exonerated', 'exo_registry', 'sag_registry', 'oce_number', 'smtp_host', 'received_date', 'discount', 'discount_auth', 'auth_pin', 'credit_limit', 'block_overdue', 'credit_auth', 'offline_id', 'install_id'))
  ORDER BY TABLE_NAME, COLUMN_NAME;

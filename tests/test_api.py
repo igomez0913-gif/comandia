@@ -122,7 +122,7 @@ def make_user(client, auth, login, role, name=None):
 def test_catalogo_de_roles(client, auth):
     data = client.get("/api/roles", headers=auth).json()
     names = [r["name"] for r in data["roles"]]
-    assert names == ["Master", "Administrador", "Supervisor", "Contador", "Cajero", "Vendedor", "Bodeguero"]
+    assert names == ["Master", "Administrador", "Supervisor", "Contador", "Cajero", "Vendedor", "Bodeguero", "Mesero", "Cocina"]
     # quien administra catálogo debe poder ver costos (el formulario de producto los guarda)
     for r in data["roles"]:
         if "catalogo" in r["permissions"]:

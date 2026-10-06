@@ -62,6 +62,9 @@ PERMISSIONS = {
     "config": "Datos del emisor, CAI y series de facturación",
     "usuarios": "Crear y administrar usuarios",
     "bitacora": "Ver la bitácora de auditoría (quién hizo qué)",
+    "mesas": "Abrir cuentas, tomar pedidos y enviarlos a cocina (salón)",
+    "salones": "Diseñar los salones y el plano de mesas",
+    "cocina": "Ver la pantalla de cocina o barra y marcar los platillos como listos",
 }
 _ALL = tuple(PERMISSIONS)
 ROLE_DEFS = {
@@ -75,7 +78,7 @@ ROLE_DEFS = {
     },
     "Supervisor": {
         "desc": "Jefe de tienda: vende, cobra, anula, cambia precios, maneja inventario y catálogo y ve reportes. Sin bancos, compras, configuración ni usuarios.",
-        "perms": ("cotizar", "facturar", "cobrar", "anular", "precios", "descuentos", "credito", "clientes", "borrar_clientes", "ver_costos", "inventario", "catalogo", "reportes"),
+        "perms": ("cotizar", "facturar", "cobrar", "anular", "precios", "descuentos", "credito", "clientes", "borrar_clientes", "ver_costos", "inventario", "catalogo", "reportes", "mesas", "cocina"),
     },
     "Contador": {
         "desc": "Contabilidad: reportes y libros SAR, compras, bancos, costos y cobros. No factura ni toca inventario.",
@@ -83,7 +86,7 @@ ROLE_DEFS = {
     },
     "Cajero": {
         "desc": "Caja: factura, cotiza y cobra. No anula, no cambia precios, no ve costos.",
-        "perms": ("cotizar", "facturar", "cobrar", "clientes"),
+        "perms": ("cotizar", "facturar", "cobrar", "clientes", "mesas"),
     },
     "Vendedor": {
         "desc": "Mostrador: cotiza y factura. No cobra (eso lo hace Caja), no cambia precios, no ve costos.",
@@ -92,6 +95,14 @@ ROLE_DEFS = {
     "Bodeguero": {
         "desc": "Bodega: consulta inventario y kardex, ajusta y traslada existencias. No vende ni ve costos.",
         "perms": ("inventario",),
+    },
+    "Mesero": {
+        "desc": "Salón: abre cuentas, toma pedidos con sus descriptivos, los envía a cocina y cambia o une mesas. No cobra, no anula lo ya enviado sin PIN y no ve costos.",
+        "perms": ("mesas", "clientes"),
+    },
+    "Cocina": {
+        "desc": "Cocina o barra: ve sus comandas en pantalla y marca los platillos como en preparación o listos. Nada más.",
+        "perms": ("cocina",),
     },
 }
 ROLES = tuple(ROLE_DEFS)
@@ -249,6 +260,7 @@ class Company(Base):
     grandfather_wh = Column(Integer, nullable=True)
     pos_enabled = Column(Integer, default=1)  # 0 = oculta el punto de venta (se factura desde Ventas)
     idle_minutes = Column(Integer, default=30)  # minutos sin usar el sistema para cerrar la sesión (0 = nunca)
+    prices_include_tax = Column(Integer, default=0)  # 1 = los precios de venta ya incluyen el ISV (restaurantes): el sistema lo separa hacia adentro
     backup_copy_dir = Column(String(255), default="")  # segunda carpeta (otro disco o unidad de red) donde se copia cada respaldo
 
 
@@ -904,6 +916,7 @@ class CompanyIn(BaseModel):
     price_names: Optional[list[str]] = None  # los 4 nombres de precio; vacío = no cambiar
     pos_enabled: Optional[bool] = None  # vacío = no cambiar
     idle_minutes: Optional[int] = Field(default=None, ge=0, le=720)  # vacío = no cambiar
+    prices_include_tax: Optional[bool] = None  # vacío = no cambiar
 
 
 class DeptIn(BaseModel):
@@ -1608,6 +1621,7 @@ NEW_COLUMNS = [
     ("documents", "buyer_name", "VARCHAR(180) DEFAULT ''"),
     ("documents", "buyer_rtn", "VARCHAR(20) DEFAULT ''"),
     ("document_items", "cost", "DECIMAL(12,4) NULL"),
+    ("company", "prices_include_tax", "INTEGER DEFAULT 0"),
     ("products", "kind", "VARCHAR(12) DEFAULT 'producto'"),
     ("products", "station", "VARCHAR(20) DEFAULT ''"),
     ("purchases", "credit", "INTEGER DEFAULT 0"),
@@ -3116,8 +3130,14 @@ def make_document(db: Session, body: DocumentIn, user: Optional[User] = None, al
         ))
         moves.append((prod.id, it.qty * factor, desc))
 
-    isv15 = round(buckets["gravado15"] * 0.15, 2)
-    isv18 = round(buckets["gravado18"] * 0.18, 2)
+    isv15 = isv18 = None
+    if body.kind in ("factura", "cotizacion", "nota") and (db.query(Company).first() or Company()).prices_include_tax:
+        # Precios con ISV incluido: lo vendido es el precio final. Se separa el impuesto por bloque (no por línea) para que el total sea exactamente lo cobrado.
+        gross15, gross18 = round(buckets["gravado15"], 2), round(buckets["gravado18"], 2)
+        buckets["gravado15"], buckets["gravado18"] = round(gross15 / 1.15, 2), round(gross18 / 1.18, 2)
+        isv15, isv18 = round(gross15 - buckets["gravado15"], 2), round(gross18 - buckets["gravado18"], 2)
+    isv15 = round(buckets["gravado15"] * 0.15, 2) if isv15 is None else isv15
+    isv18 = round(buckets["gravado18"] * 0.18, 2) if isv18 is None else isv18
     subtotal = round(sum(buckets.values()), 2)
     tax = round(isv15 + isv18, 2)
     total = round(subtotal + tax, 2)
@@ -3619,6 +3639,12 @@ def activate_license(body: LicenseIn, db: Session = Depends(get_db), user: User 
 @app.post("/api/pos/sale")
 def pos_sale(body: PosSaleIn, db: Session = Depends(get_db), user: User = Depends(require("facturar"))):
     """Punto de venta: emite la factura de contado y registra el cobro juntos (si algo falla, no queda nada a medias)."""
+    return _pos_sale(body, db, user)
+
+
+def _pos_sale(body: PosSaleIn, db: Session, user: User, commit: bool = True, trusted_prices: bool = False) -> dict:
+    """Núcleo de la venta de mostrador. Con commit=False el llamador cierra la transacción (cobrar una cuenta del salón: factura, cobros y cuenta cerrada juntos).
+    trusted_prices: los precios ya los fijó el servidor (cuenta del salón) y no los escribió el usuario, así que no se le exige el permiso de precios."""
     if not has_perm(user, "cobrar"):
         raise HTTPException(403, f"Tu rol ({user.role}) no puede cobrar: usa Ventas › Nueva factura y que Caja cobre")
     if not body.payments:
@@ -3652,7 +3678,7 @@ def pos_sale(body: PosSaleIn, db: Session = Depends(get_db), user: User = Depend
                 paid_at = real
         who = body.offline_user.strip() or user.name
         doc_in.notes = f"Venta sin conexión {offline_id or 'sin id'} · realizada el {paid_at.strftime('%d/%m/%Y %H:%M')} · cajero {who}"
-    authorizer = check_prices(db, doc_in, user)
+    authorizer = None if trusted_prices else check_prices(db, doc_in, user)
     d = make_document(db, doc_in, user, allow_negative=body.offline)
     note_discount_auth(db, d, authorizer, user)
     if offline_id:
@@ -3682,8 +3708,11 @@ def pos_sale(body: PosSaleIn, db: Session = Depends(get_db), user: User = Depend
     refresh_invoice_status(d)
     audit(db, user, "Venta sin conexión sincronizada" if body.offline else "Venta de mostrador", f"{d.number} · {d.client.name if d.client else ''} · L {total:,.2f} · "
           + ", ".join(f"{p.method} L {p.amount:,.2f}" for p in body.payments) + (f" · {offline_id}" if body.offline and offline_id else ""), "documento", d.id)
-    db.commit()
-    db.refresh(d)
+    if commit:
+        db.commit()
+        db.refresh(d)
+    else:
+        db.flush()
     out = doc_out(d)
     out["change"] = change
     return out
@@ -5218,7 +5247,7 @@ def get_settings(db: Session = Depends(get_db), user: User = Depends(current_use
     return {
         "name": c.name, "legal_name": c.legal_name, "rtn": c.rtn, "address": c.address,
         "phone": c.phone, "email": c.email, "currency": c.currency, "logo": c.logo_path or "",
-        "price_names": price_names(c), "pos_enabled": c.pos_enabled != 0, "idle_minutes": 30 if c.idle_minutes is None else c.idle_minutes,
+        "price_names": price_names(c), "prices_include_tax": bool(c.prices_include_tax), "pos_enabled": c.pos_enabled != 0, "idle_minutes": 30 if c.idle_minutes is None else c.idle_minutes,
         "database": "MySQL" if DB_URL.startswith("mysql") else "SQLite (demo local)",
         "cai": [{"id": r.id, "cai": r.cai, "doc_type": r.doc_type, "purpose": cai_purpose(r), "purpose_label": CAI_PURPOSES.get(cai_purpose(r), "Otro"), "establishment": r.establishment, "emission_point": r.emission_point, "range_from": r.range_from, "range_to": r.range_to, "current": r.current, "limit_date": r.limit_date.isoformat(),
                  "received_date": r.received_date.isoformat() if r.received_date else None, "active": r.active, "expired": r.limit_date < today_local()} for r in ranges],
@@ -5239,6 +5268,11 @@ def put_settings(body: CompanyIn, db: Session = Depends(get_db), user: User = De
     pos = data.pop("pos_enabled")
     if pos is not None:
         c.pos_enabled = 1 if pos else 0
+    inclusive = data.pop("prices_include_tax")
+    if inclusive is not None:
+        if bool(c.prices_include_tax) != inclusive:
+            audit(db, user, "Cambió cómo se manejan los precios", "los precios incluyen ISV" if inclusive else "los precios no incluyen ISV", "empresa", c.id)
+        c.prices_include_tax = 1 if inclusive else 0
     names = data.pop("price_names")
     if names is not None:
         names = [str(n).strip().replace("|", "/")[:40] for n in names]
@@ -5618,6 +5652,6 @@ def service_worker():
                         headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
 
 
-from app import restaurante  # noqa: E402,F401  (recetas, descriptivos y órdenes de preparación; usa lo definido arriba)
+from app import restaurante, salon  # noqa: E402,F401  (recetas, descriptivos, preparación y salón; usan lo definido arriba)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
