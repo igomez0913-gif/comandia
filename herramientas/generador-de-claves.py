@@ -5,7 +5,7 @@ Uso sin argumentos: menú. También por comandos:
 
   generador-de-claves.py crear-llaves
   generador-de-claves.py emitir --cliente "Ferretería Toty" --instalacion ABCD-EFGH \\
-        --plan profesional --modulos whatsapp --bodegas 5   (perpetua; para una con vencimiento agrega --meses 12 o --vence AAAA-MM-DD)
+        --plan profesional --modulos email --bodegas 5   (perpetua; para una con vencimiento agrega --meses 12 o --vence AAAA-MM-DD)
   generador-de-claves.py listar
   generador-de-claves.py verificar ABCDE-FGHIJ-...
 
@@ -170,8 +170,7 @@ def menu():
                 print("Módulos disponibles:", ", ".join(licencia.MODULES))
                 extras = ask("Módulos extra, separados por coma (vacío = ninguno)", "")
             modulos = resolver_modulos(plan, [m for m in extras.split(",") if m.strip()])
-            limites = {"bodegas": int(ask("Máximo de bodegas (0 = sin límite)", "0")), "tiendas": int(ask("Máximo de tiendas (0 = sin límite)", "0")),
-                       "usuarios": int(ask("Máximo de usuarios (0 = sin límite)", "0")), "cajas": int(ask("Máximo de cajas (0 = sin límite)", "0"))}
+            limites = {"bodegas": int(ask("Máximo de bodegas (0 = sin límite)", "0")), "usuarios": int(ask("Máximo de usuarios (0 = sin límite)", "0")), "cajas": int(ask("Máximo de cajas (0 = sin límite)", "0"))}
             meses = int(ask("Meses de vigencia (0 = perpetua, sin vencimiento)", "0"))
             emitir(cliente, instalacion, modulos, limites, add_months(date.today(), meses) if meses else None)
         elif choice == "3":
@@ -192,7 +191,7 @@ def main():
     e.add_argument("--cliente", required=True); e.add_argument("--instalacion", required=True)
     e.add_argument("--plan", default="", help="paquete: basico, profesional, empresarial o todo (basico = sin módulos de pago; todo = todos, presentes y futuros)")
     e.add_argument("--modulos", default="", help="módulos sueltos, separados por coma (se suman al paquete): " + ", ".join(licencia.MODULES))
-    for name in ("bodegas", "tiendas", "usuarios", "cajas"):
+    for name in ("bodegas", "usuarios", "cajas"):
         e.add_argument(f"--{name}", type=int, default=0, help="0 = sin límite")
     g = e.add_mutually_exclusive_group()
     g.add_argument("--vence", help="AAAA-MM-DD"); g.add_argument("--meses", type=int); g.add_argument("--sin-vencimiento", action="store_true")
@@ -206,7 +205,7 @@ def main():
         if not modulos and not a.plan:
             fail("Indica --plan (basico, profesional, empresarial o todo) y/o --modulos")
         vence = None if a.sin_vencimiento else parse_date(a.vence) if a.vence else add_months(date.today(), a.meses) if a.meses else None  # sin fecha = perpetua
-        emitir(a.cliente, a.instalacion, modulos, {"bodegas": a.bodegas, "tiendas": a.tiendas, "usuarios": a.usuarios, "cajas": a.cajas}, vence)
+        emitir(a.cliente, a.instalacion, modulos, {"bodegas": a.bodegas, "usuarios": a.usuarios, "cajas": a.cajas}, vence)
     elif a.cmd == "listar":
         listar()
     else:

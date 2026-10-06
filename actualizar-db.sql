@@ -216,8 +216,6 @@ CALL comandia_add_column('company', 'smtp_user', 'VARCHAR(160) DEFAULT ''''');
 CALL comandia_add_column('company', 'smtp_password', 'VARCHAR(200) DEFAULT ''''');
 CALL comandia_add_column('company', 'smtp_from', 'VARCHAR(160) DEFAULT ''''');
 CALL comandia_add_column('company', 'smtp_security', 'VARCHAR(10) DEFAULT ''starttls''');
-CALL comandia_add_column('company', 'wa_url', 'VARCHAR(255) DEFAULT ''''');
-CALL comandia_add_column('company', 'wa_key', 'VARCHAR(200) DEFAULT ''''');
 CALL comandia_add_column('company', 'install_id', 'VARCHAR(20) DEFAULT ''''');
 CALL comandia_add_column('company', 'license_key', 'TEXT NULL');
 CALL comandia_add_column('company', 'trial_start', 'DATE NULL');
@@ -280,5 +278,5 @@ SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
    AND ((TABLE_NAME = 'audit_log' AND COLUMN_NAME = 'id')
         OR COLUMN_NAME IN ('ref_document_id', 'user_id', 'user_name', 'price_level', 'price_names', 'price_2', 'price_3', 'price_4',
                            'backup_enabled', 'backup_hour', 'backup_keep', 'backup_dir',
-                           'exonerated', 'exo_registry', 'sag_registry', 'oce_number', 'smtp_host', 'received_date', 'discount', 'discount_auth', 'auth_pin', 'credit_limit', 'block_overdue', 'credit_auth', 'wa_url', 'offline_id', 'install_id'))
+                           'exonerated', 'exo_registry', 'sag_registry', 'oce_number', 'smtp_host', 'received_date', 'discount', 'discount_auth', 'auth_pin', 'credit_limit', 'block_overdue', 'credit_auth', 'offline_id', 'install_id'))
  ORDER BY TABLE_NAME, COLUMN_NAME;

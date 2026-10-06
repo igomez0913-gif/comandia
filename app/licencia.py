@@ -5,7 +5,7 @@ clientes). El sistema solo trae la llave PÚBLICA (app/llave_publica.pem), así 
 auténtica pero no fabricarla, y todo se valida sin internet.
 
 La clave lleva: el código de instalación del cliente (solo sirve en esa instalación), la fecha de emisión y de
-vencimiento, los módulos activos y los límites (bodegas, tiendas, usuarios, cajas). Son 84 bytes (20 de datos y 64 de
+vencimiento, los módulos activos y los límites (bodegas, usuarios, cajas; el byte de tiendas queda reservado). Son 84 bytes (20 de datos y 64 de
 firma ECDSA P-256) escritos en base32 y agrupados de a 5: `ABCDE-FGHIJ-...`.
 
 Planes: Básico (sin clave), Profesional, Empresarial y Todo; cada clave lleva la lista de módulos y los límites (ver PLANS).
@@ -37,13 +37,11 @@ SIGNATURE_SIZE = 64
 UNLIMITED = 0  # en los límites, 0 = sin límite
 
 # El orden es el de los bits de la clave: no se reordena, solo se agregan al final (hasta 15; el bit 16 es «todo»).
-MODULES = ["whatsapp", "multi_warehouse", "multi_tienda", "offline", "importar_excel", "turnos_caja", "reports", "advanced_credit",
+MODULES = ["multi_warehouse", "offline", "importar_excel", "turnos_caja", "reports", "advanced_credit",
            "reabastecimiento", "docs_fiscales", "etiquetas", "backup", "api", "email", "compras"]
 ALL_BIT = 15  # «todo»: cada módulo de hoy y los que se agreguen en el futuro
 MODULE_LABELS = {
-    "whatsapp": "WhatsApp: recordatorios, estados de cuenta y envío de facturas",
     "multi_warehouse": "Multi-bodega y traslados entre bodegas",
-    "multi_tienda": "Multi-tienda: sucursales con su propio CAI, usuarios y cajas",
     "offline": "Modo sin conexión con sincronización",
     "importar_excel": "Importar productos desde Excel",
     "turnos_caja": "Turnos de caja",
@@ -58,7 +56,7 @@ MODULE_LABELS = {
     "compras": "Compras completas: órdenes, recepción, cuentas por pagar y devoluciones",
 }
 MODULE_NAMES = {  # nombre corto, para los avisos
-    "whatsapp": "WhatsApp", "multi_warehouse": "Multi-bodega", "multi_tienda": "Multi-tienda", "offline": "Modo sin conexión", "importar_excel": "Importar desde Excel",
+    "multi_warehouse": "Multi-bodega", "offline": "Modo sin conexión", "importar_excel": "Importar desde Excel",
     "turnos_caja": "Turnos de caja", "reports": "Reportes avanzados", "advanced_credit": "Crédito avanzado", "reabastecimiento": "Reabastecimiento",
     "docs_fiscales": "Notas de débito", "etiquetas": "Etiquetas y códigos de barras", "backup": "Respaldos automáticos", "api": "API REST",
     "email": "Correo electrónico", "compras": "Compras",
@@ -72,7 +70,7 @@ PLAN_BASE = ["multi_warehouse", "reports", "backup", "api", "importar_excel", "e
 PLANS = {
     "basico": [],
     "profesional": PLAN_BASE,
-    "empresarial": PLAN_BASE + ["whatsapp", "email", "offline", "compras", "advanced_credit", "reabastecimiento", "docs_fiscales", "multi_tienda"],
+    "empresarial": PLAN_BASE + ["email", "offline", "compras", "advanced_credit", "reabastecimiento", "docs_fiscales"],
     "todo": list(MODULES),
 }
 PLAN_LABELS = {"basico": "Básico", "profesional": "Profesional", "empresarial": "Empresarial", "todo": "Todo incluido"}
@@ -229,6 +227,4 @@ def evaluate(install_id: str, key_text: str, trial_start: Optional[date], today:
     unlimited = key is None or out["trial"]["active"]
     lim = out["limits"]["bodegas"]
     out["warehouses_allowed"] = None if unlimited or (out["active"]["multi_warehouse"] and lim == UNLIMITED) else (lim if out["active"]["multi_warehouse"] else 1)
-    lim_t = out["limits"]["tiendas"]
-    out["stores_allowed"] = None if unlimited or (out["active"]["multi_tienda"] and lim_t == UNLIMITED) else (lim_t if out["active"]["multi_tienda"] else 1)
     return out

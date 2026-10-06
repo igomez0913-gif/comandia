@@ -1,4 +1,4 @@
-"""Pruebas de la v2.9: activación de módulos por clave firmada (WhatsApp directo y multi-bodega) y generador de claves."""
+"""Pruebas de la v2.9: activación de módulos por clave firmada (correo y multi-bodega) y generador de claves."""
 import importlib.util
 import os
 from datetime import date, timedelta
@@ -18,7 +18,7 @@ def keys(monkeypatch):
     return private_pem
 
 
-def issue(private_pem, install, modules=("whatsapp", "multi_warehouse"), expires=date.today() + timedelta(days=365), **limits):
+def issue(private_pem, install, modules=("email", "multi_warehouse"), expires=date.today() + timedelta(days=365), **limits):
     payload = licencia.pack(os.urandom(4), install, date.today(), expires, modules, limits)
     return licencia.sign(private_pem, payload)
 
@@ -42,7 +42,7 @@ def test_clave_firmada_ida_y_vuelta_y_manipulaciones(keys):
     key = issue(keys, inst, bodegas=5)
     assert len(key.replace("-", "")) == 135
     info = licencia.read_key(key)
-    assert info["modules"] == ["whatsapp", "multi_warehouse"] and info["limits"]["bodegas"] == 5 and info["expires"] > date.today()
+    assert info["modules"] == ["multi_warehouse", "email"] and info["limits"]["bodegas"] == 5 and info["expires"] > date.today()
     assert licencia.read_key(key.lower().replace("-", " "))["key_id"] == info["key_id"]  # tolera minúsculas, espacios y guiones
     chars = list(key)
     pos = next(i for i, ch in enumerate(chars) if ch != "-")
@@ -60,14 +60,14 @@ def test_prueba_de_30_dias_y_vencimiento(keys):
     trial = licencia.evaluate(inst, "", today, today)
     assert trial["trial"]["active"] and all(trial["active"].values()) and trial["warehouses_allowed"] is None
     over = licencia.evaluate(inst, "", today - timedelta(days=31), today)
-    assert not over["trial"]["active"] and over["active"]["whatsapp"] is False and over["active"]["multi_warehouse"] is False
+    assert not over["trial"]["active"] and over["active"]["email"] is False and over["active"]["multi_warehouse"] is False
     assert over["active"]["turnos_caja"] is True and over["active"]["reports"] is False and over["warehouses_allowed"] == 1  # lo incluido sigue abierto; lo adicional se bloquea
     ok = licencia.evaluate(inst, issue(keys, inst, bodegas=4), today - timedelta(days=60), today)
-    assert ok["active"]["whatsapp"] and ok["warehouses_allowed"] == 4 and ok["valid"]
+    assert ok["active"]["email"] and ok["warehouses_allowed"] == 4 and ok["valid"]
     unlimited = licencia.evaluate(inst, issue(keys, inst), today - timedelta(days=60), today)
     assert unlimited["warehouses_allowed"] is None
     old = licencia.evaluate(inst, issue(keys, inst, expires=today - timedelta(days=2)), today - timedelta(days=60), today)
-    assert old["valid"] is False and "venció" in old["reason"] and old["active"]["whatsapp"] is False
+    assert old["valid"] is False and "venció" in old["reason"] and old["active"]["email"] is False
     other = licencia.evaluate(inst, issue(keys, licencia.new_install_id()), today - timedelta(days=60), today)
     assert other["valid"] is False and "otra instalación" in other["reason"]
 
@@ -80,7 +80,7 @@ def test_sin_llave_publica_todo_abierto(client, auth, monkeypatch):
 
 
 # ───────── candados en el sistema ─────────
-def test_whatsapp_y_bodegas_se_bloquean_al_terminar_la_prueba_y_se_activan_con_la_clave(client, auth, login, keys):
+def test_correo_y_bodegas_se_bloquean_al_terminar_la_prueba_y_se_activan_con_la_clave(client, auth, login, keys):
     lic = client.get("/api/license", headers=auth).json()
     assert lic["configured"] and lic["trial"]["active"] and lic["trial"]["days_left"] == licencia.TRIAL_DAYS and len(lic["install_id"]) == 9
     # en la prueba todo funciona
@@ -91,11 +91,10 @@ def test_whatsapp_y_bodegas_se_bloquean_al_terminar_la_prueba_y_se_activan_con_l
     assert blocked.status_code == 403 and "Multi-bodega" in blocked.json()["detail"]
     lic = client.get("/api/license", headers=auth).json()
     assert lic["warehouses_allowed"] == 1  # sin Multi-bodega el límite es 1; las que ya existen se conservan pero no se agregan más
-    for call in (lambda: client.put("/api/settings/whatsapp", json={"url": "http://127.0.0.1:8002"}, headers=auth),
-                 lambda: client.post("/api/settings/whatsapp/test", json={}, headers=auth)):
+    for call in (lambda: client.put("/api/settings/email", json={"host": "h", "port": 587}, headers=auth),
+                 lambda: client.post("/api/settings/email/test", json={"to": "a@b.hn"}, headers=auth)):
         r = call()
-        assert r.status_code == 403 and "WhatsApp" in r.json()["detail"]
-    assert client.get("/api/whatsapp/status", headers=auth).json() == {"configured": False}
+        assert r.status_code == 403 and "Correo" in r.json()["detail"]
     # activar la clave
     inst = install_id(client, auth)
     assert client.post("/api/license", json={"key": issue(keys, licencia.new_install_id())}, headers=auth).status_code == 400  # de otra instalación
@@ -106,8 +105,7 @@ def test_whatsapp_y_bodegas_se_bloquean_al_terminar_la_prueba_y_se_activan_con_l
     assert client.post("/api/license", json={"key": key}, headers=caja).status_code == 403  # solo quien configura
     r = client.post("/api/license", json={"key": key}, headers=auth)
     assert r.status_code == 200 and r.json()["valid"] and r.json()["warehouses_allowed"] == len(wh) + 2
-    assert client.put("/api/settings/whatsapp", json={"url": "http://127.0.0.1:8002"}, headers=auth).status_code == 200
-    assert client.get("/api/whatsapp/status", headers=auth).json() == {"configured": True}
+    assert client.put("/api/settings/email", json={"host": "h", "port": 587}, headers=auth).status_code != 403  # el módulo ya está activo
     assert client.post("/api/warehouses", json={"code": "T2", "name": "Otra", "address": ""}, headers=auth).status_code == 200
     assert client.post("/api/warehouses", json={"code": "T3", "name": "Otra 2", "address": ""}, headers=auth).status_code == 200
     third = client.post("/api/warehouses", json={"code": "T4", "name": "Otra 3", "address": ""}, headers=auth)
@@ -165,16 +163,16 @@ def test_generador_de_claves(tmp_path, capsys, keys):
     with pytest.raises(SystemExit):
         gen.crear_llaves()  # no pisa las llaves existentes
     inst = licencia.new_install_id()
-    gen.emitir("Ferretería Prueba", inst, ["whatsapp", "multi_warehouse"], {"bodegas": 3}, date.today() + timedelta(days=30))
+    gen.emitir("Ferretería Prueba", inst, ["email", "multi_warehouse"], {"bodegas": 3}, date.today() + timedelta(days=30))
     out = capsys.readouterr().out
     key = next(line for line in out.splitlines() if line.count("-") > 20)
     from ecdsa import VerifyingKey
     pub = VerifyingKey.from_pem(open(gen.PUBLIC, "rb").read())
     info = licencia.read_key(key, pub)
-    assert info["modules"] == ["whatsapp", "multi_warehouse"] and info["limits"]["bodegas"] == 3
+    assert info["modules"] == ["multi_warehouse", "email"] and info["limits"]["bodegas"] == 3
     assert "Ferretería Prueba" in open(gen.LOG, encoding="utf-8-sig").read()
     with pytest.raises(SystemExit):
-        gen.emitir("X", "ZZZ", ["whatsapp"], {}, None)  # código de instalación inválido
+        gen.emitir("X", "ZZZ", ["email"], {}, None)  # código de instalación inválido
     with pytest.raises(SystemExit):
         gen.emitir("X", inst, ["inexistente"], {}, None)
 

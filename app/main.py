@@ -242,9 +242,6 @@ class Company(Base):
     smtp_password = Column(String(200), default="")
     smtp_from = Column(String(160), default="")
     smtp_security = Column(String(10), default="starttls")  # starttls, ssl o none
-    # WhatsApp con OpenWA (@open-wa/wa-automate): dirección de su API y clave (api_key).
-    wa_url = Column(String(255), default="")
-    wa_key = Column(String(200), default="")
     # Licencia (activación de módulos por clave): código de instalación, clave, inicio de la prueba y bodegas que ya tenía.
     install_id = Column(String(20), default="")
     license_key = Column(Text, default="")
@@ -876,12 +873,6 @@ class WarehouseIn(BaseModel):
     name: str = Field(min_length=1)
     address: str = ""
     store_id: Optional[int] = None
-
-
-class StoreIn(BaseModel):
-    code: str = Field(min_length=1, max_length=3)
-    name: str = Field(min_length=1, max_length=120)
-    address: str = ""
 
 
 class TransferIn(BaseModel):
@@ -1560,8 +1551,6 @@ NEW_COLUMNS = [
     ("company", "smtp_password", "VARCHAR(200) DEFAULT ''"),
     ("company", "smtp_from", "VARCHAR(160) DEFAULT ''"),
     ("company", "smtp_security", "VARCHAR(10) DEFAULT 'starttls'"),
-    ("company", "wa_url", "VARCHAR(255) DEFAULT ''"),
-    ("company", "wa_key", "VARCHAR(200) DEFAULT ''"),
     ("company", "install_id", "VARCHAR(20) DEFAULT ''"),
     ("company", "license_key", "TEXT NULL"),
     ("company", "trial_start", "DATE NULL"),
@@ -1629,12 +1618,12 @@ def add_missing_indexes(eng):
 
 
 def encrypt_stored_secrets(db: Session):
-    """Cifra las claves del correo y de OpenWA que se hayan guardado antes sin cifrar."""
+    """Cifra la clave del correo que se hayan guardado antes sin cifrar."""
     c = db.query(Company).first()
     if not c:
         return
     changed = False
-    for field in ("smtp_password", "wa_key"):
+    for field in ("smtp_password",):
         value = getattr(c, field) or ""
         if value and not secretos.is_encrypted(value):
             setattr(c, field, secretos.encrypt(value, SECRET))
@@ -1811,7 +1800,7 @@ def create_user(body: UserIn, db: Session = Depends(get_db), user: User = Depend
         raise HTTPException(400, "Ese correo ya está registrado")
     _check_user_limit(db, adding=1 if body.active else 0)
     u = User(name=body.name.strip(), email=email, password_hash=hash_password(body.password), role=body.role,
-             initials=initials(body.name)[:4], active=1 if body.active else 0, store_id=body.store_id if body.store_id and db.get(Store, body.store_id) else None)
+             initials=initials(body.name)[:4], active=1 if body.active else 0, store_id=None)
     db.add(u)
     db.flush()
     audit(db, user, "Creó usuario", f"{u.name} · {u.email} · {u.role}", "usuario", u.id)
@@ -1849,7 +1838,6 @@ def update_user(uid: int, body: UserIn, db: Session = Depends(get_db), user: Use
         changes.append("clave restablecida")
     audit(db, user, "Editó usuario", f"{body.name.strip()} · {email}" + (" · " + ", ".join(changes) if changes else ""), "usuario", u.id)
     u.name, u.email, u.role, u.initials, u.active = body.name.strip(), email, body.role, initials(body.name)[:4], 1 if body.active else 0
-    u.store_id = body.store_id if body.store_id and db.get(Store, body.store_id) else None
     if body.password:
         check_password(body.password)
         u.password_hash = hash_password(body.password)
@@ -2335,7 +2323,7 @@ def create_warehouse(body: WarehouseIn, db: Session = Depends(get_db), user: Use
     have = db.query(Warehouse).filter(Warehouse.active == 1).count()
     if allowed is not None and have >= allowed:
         raise HTTPException(403, f"Tu licencia permite {allowed} bodega(s) y ya tienes {have}. Para agregar más activa el módulo «Multi-bodega» en Configuración › Licencia.")
-    w = Warehouse(code=body.code.strip().upper(), name=body.name.strip(), address=body.address, store_id=_store_or_default(db, body.store_id))
+    w = Warehouse(code=body.code.strip().upper(), name=body.name.strip(), address=body.address, store_id=None)
     db.add(w)
     db.commit()
     return {"id": w.id}
@@ -2350,7 +2338,6 @@ def update_warehouse(wid: int, body: WarehouseIn, db: Session = Depends(get_db),
     if db.query(Warehouse).filter(Warehouse.code == code, Warehouse.id != wid).first():
         raise HTTPException(400, "El código de bodega ya existe")
     w.code, w.name, w.address = code, body.name.strip(), body.address
-    w.store_id = _store_or_default(db, body.store_id)
     db.commit()
     return {"ok": True}
 
@@ -3494,9 +3481,9 @@ class LicenseIn(BaseModel):
     key: str = Field(min_length=10, max_length=600)
 
 
-# ───────────────────────── Tiendas (módulo Multi-tienda) ─────────────────────────
+# ───────────────────────── Establecimiento (Comandia es de un solo local) ─────────────────────────
 def default_store(db: Session) -> Store:
-    """La tienda principal (la primera). Existe siempre: las bodegas y documentos sin tienda pertenecen a ella."""
+    """El establecimiento del local (el primero). Existe siempre: lleva el código de establecimiento de la numeración fiscal del SAR."""
     st = db.query(Store).order_by(Store.id).first()
     if not st:
         c = db.query(Company).first()
@@ -3516,101 +3503,13 @@ def store_of(db: Session, warehouse: Optional[Warehouse]) -> Store:
 
 
 def multi_store(db: Session) -> bool:
-    """Con el módulo activo y más de una tienda, cada tienda usa los CAI de su establecimiento."""
-    return module_on(db, "multi_tienda") and db.query(Store).filter(Store.active == 1).count() > 1
+    """Comandia atiende un solo local: todos los documentos usan el establecimiento de su CAI."""
+    return False
 
 
 def store_scope(db: Session, user: Optional[User]) -> Optional[int]:
-    """Tienda a la que está limitado el usuario (None = ve todas)."""
-    if user is None or not user.store_id or not module_on(db, "multi_tienda"):
-        return None
-    return user.store_id if db.get(Store, user.store_id) else None
-
-
-def store_out(db: Session, st: Store, default_id: int) -> dict:
-    whs = db.query(Warehouse).filter(Warehouse.active == 1)
-    whs = whs.filter(or_(Warehouse.store_id == st.id, Warehouse.store_id.is_(None))) if st.id == default_id else whs.filter(Warehouse.store_id == st.id)
-    first = today_local().replace(day=1)
-    docs = db.query(Document).filter(Document.kind == "factura", Document.status != "Anulada", Document.issued_at >= datetime.combine(first, datetime.min.time()))
-    docs = docs.filter(or_(Document.store_id == st.id, Document.store_id.is_(None))) if st.id == default_id else docs.filter(Document.store_id == st.id)
-    return {"id": st.id, "code": st.code, "name": st.name, "address": st.address, "main": st.id == default_id, "warehouses": whs.count(),
-            "sales_month": money(sum(float(d.total) for d in docs.all())),
-            "cai": db.query(CaiRange).filter(CaiRange.establishment == st.code, CaiRange.active == 1).count()}
-
-
-@app.get("/api/stores")
-def list_stores(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    main = default_store(db)
-    db.commit()
-    scope = store_scope(db, user)
-    rows = db.query(Store).filter(Store.active == 1).order_by(Store.id).all()
-    return [store_out(db, st, main.id) for st in rows if scope is None or st.id == scope]
-
-
-def _clean_store_code(code: str) -> str:
-    code = (code or "").strip()
-    if not re.fullmatch(r"\d{1,3}", code):
-        raise HTTPException(400, "El código de la tienda son 3 dígitos (el establecimiento de su CAI, por ejemplo 002)")
-    return code.zfill(3)
-
-
-@app.post("/api/stores")
-def create_store(body: StoreIn, db: Session = Depends(get_db), user: User = Depends(require("config"))):
-    default_store(db)
-    state = license_state(db)
-    have = db.query(Store).filter(Store.active == 1).count()
-    if state["stores_allowed"] is not None and have >= state["stores_allowed"]:
-        raise HTTPException(403, f"Tu licencia permite {state['stores_allowed']} tienda(s) y ya tienes {have}. Para agregar más activa el módulo «Multi-tienda» en Configuración › Licencia.")
-    code = _clean_store_code(body.code)
-    if db.query(Store).filter(Store.code == code).first():
-        raise HTTPException(400, "Ya existe una tienda con ese código")
-    st = Store(code=code, name=body.name.strip(), address=body.address.strip())
-    db.add(st)
-    db.flush()
-    audit(db, user, "Creó tienda", f"{st.code} · {st.name}", "tienda", st.id)
-    db.commit()
-    return {"id": st.id}
-
-
-@app.put("/api/stores/{sid}")
-def update_store(sid: int, body: StoreIn, db: Session = Depends(get_db), user: User = Depends(require("config"))):
-    st = db.get(Store, sid)
-    if not st or not st.active:
-        raise HTTPException(404, "Tienda no encontrada")
-    code = _clean_store_code(body.code)
-    if db.query(Store).filter(Store.code == code, Store.id != sid).first():
-        raise HTTPException(400, "Ya existe una tienda con ese código")
-    st.code, st.name, st.address = code, body.name.strip(), body.address.strip()
-    audit(db, user, "Editó tienda", f"{st.code} · {st.name}", "tienda", st.id)
-    db.commit()
-    return {"ok": True}
-
-
-@app.delete("/api/stores/{sid}")
-def delete_store(sid: int, db: Session = Depends(get_db), user: User = Depends(require("config"))):
-    st = db.get(Store, sid)
-    main = default_store(db)
-    if not st or not st.active:
-        raise HTTPException(404, "Tienda no encontrada")
-    if st.id == main.id:
-        raise HTTPException(400, "La tienda principal no se puede desactivar")
-    if db.query(Warehouse).filter(Warehouse.store_id == sid, Warehouse.active == 1).first():
-        raise HTTPException(400, "Esta tienda aún tiene bodegas activas: pásalas a otra tienda o desactívalas primero")
-    st.active = 0
-    db.query(User).filter(User.store_id == sid).update({"store_id": None})
-    audit(db, user, "Desactivó tienda", f"{st.code} · {st.name}", "tienda", st.id)
-    db.commit()
-    return {"ok": True}
-
-
-def _store_or_default(db: Session, store_id: Optional[int]) -> Optional[int]:
-    """Valida la tienda elegida para una bodega o usuario (None = sin tienda: la principal)."""
-    if not store_id:
-        return None
-    st = db.get(Store, store_id)
-    if not st or not st.active:
-        raise HTTPException(400, "Tienda no válida")
-    return None if st.id == default_store(db).id else st.id
+    """Sin varias tiendas ningún usuario queda limitado a una."""
+    return None
 
 
 @app.get("/api/license")
@@ -3632,99 +3531,6 @@ def activate_license(body: LicenseIn, db: Session = Depends(get_db), user: User 
           + (f" · vence {state['expires']}" if state["expires"] else " · sin vencimiento"), "empresa", c.id)
     db.commit()
     return license_out(license_state(db))
-
-
-# ───────────────────────── WhatsApp (OpenWA) ─────────────────────────
-class WhatsAppSettingsIn(BaseModel):
-    url: str = Field(default="", max_length=255)
-    key: Optional[str] = Field(default=None, max_length=64)  # None = conservar la guardada; "" = quitarla
-
-
-class WhatsAppTestIn(BaseModel):
-    phone: str = ""
-
-
-class WhatsAppDocIn(BaseModel):
-    phone: str = Field(min_length=1, max_length=40)
-    message: str = Field(min_length=1, max_length=2000)
-    attach: bool = True  # adjuntar el PDF del documento (el recordatorio de cobro va solo como texto)
-
-
-def wa_config(c: Company) -> dict:
-    return {"url": (c.wa_url or "").strip(), "key": secretos.decrypt(c.wa_key or "", SECRET)}
-
-
-def wa_settings_out(c: Company) -> dict:
-    return {"url": c.wa_url or "", "has_key": bool(secretos.decrypt(c.wa_key or "", SECRET)), "configured": bool((c.wa_url or "").strip())}
-
-
-@app.get("/api/whatsapp/status")
-def whatsapp_status(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    """La pantalla solo necesita saber si el envío directo está configurado (no se entrega la dirección ni la clave)."""
-    return {"configured": bool((db.query(Company).first().wa_url or "").strip()) and module_on(db, "whatsapp")}
-
-
-@app.get("/api/settings/whatsapp")
-def get_whatsapp_settings(db: Session = Depends(get_db), user: User = Depends(require("config"))):
-    return wa_settings_out(db.query(Company).first())
-
-
-@app.put("/api/settings/whatsapp")
-def put_whatsapp_settings(body: WhatsAppSettingsIn, db: Session = Depends(get_db), user: User = Depends(require("config"))):
-    from app.whatsapp import WhatsAppError, clean_url
-    ensure_module(db, "whatsapp")
-    try:
-        url = clean_url(body.url)
-    except WhatsAppError as exc:
-        raise HTTPException(400, str(exc))
-    c = db.query(Company).first()
-    c.wa_url = url
-    if body.key is not None:
-        c.wa_key = secretos.encrypt(body.key.strip(), SECRET)
-    audit(db, user, "Configuró WhatsApp (OpenWA)", url or "desactivado", "empresa", c.id)
-    db.commit()
-    return wa_settings_out(c)
-
-
-@app.post("/api/settings/whatsapp/test")
-def test_whatsapp_settings(body: WhatsAppTestIn, db: Session = Depends(get_db), user: User = Depends(require("config"))):
-    from app.whatsapp import WhatsAppError, connection_state, send_text
-    ensure_module(db, "whatsapp")
-    c = db.query(Company).first()
-    cfg = wa_config(c)
-    try:
-        state = connection_state(cfg)
-        if state.upper() != "CONNECTED":
-            raise WhatsAppError(f"OpenWA responde pero WhatsApp no está vinculado (estado: {state}). Escanea el código QR de OpenWA con el celular de la empresa.")
-        if body.phone.strip():
-            send_text(cfg, body.phone, f"Prueba de {c.name}: si recibes este mensaje, el envío de facturas por WhatsApp desde Comandia está listo.")
-    except WhatsAppError as exc:
-        raise HTTPException(502, str(exc))
-    return {"ok": True, "state": state, "sent": bool(body.phone.strip())}
-
-
-@app.post("/api/documents/{did}/whatsapp")
-def whatsapp_document(did: int, body: WhatsAppDocIn, db: Session = Depends(get_db), user: User = Depends(require("cotizar", "facturar", "cobrar"))):
-    """Envía el documento (PDF con el mensaje) o un recordatorio de cobro (solo texto) por WhatsApp con OpenWA."""
-    from app.whatsapp import WhatsAppError, send_pdf, send_text
-    ensure_module(db, "whatsapp")
-    d = db.get(Document, did)
-    if not d:
-        raise HTTPException(404, "Documento no encontrado")
-    c = db.query(Company).first()
-    cfg = wa_config(c)
-    if not cfg["url"]:
-        raise HTTPException(400, "Falta configurar OpenWA en Configuración › WhatsApp")
-    try:
-        if body.attach:
-            send_pdf(cfg, body.phone, f"{d.number}.pdf", render_pdf(db, d), body.message.strip())
-        else:
-            send_text(cfg, body.phone, body.message.strip())
-    except WhatsAppError as exc:
-        raise HTTPException(502, str(exc))
-    audit(db, user, "Envió por WhatsApp" if body.attach else "Recordatorio de cobro por WhatsApp", f"{d.number} · {body.phone.strip()}", "documento", d.id)
-    db.commit()
-    return {"ok": True}
 
 
 @app.post("/api/pos/sale")
@@ -5202,7 +5008,7 @@ def open_shift(body: ShiftOpenIn, db: Session = Depends(get_db), user: User = De
         raise HTTPException(400, "Ya tienes un turno abierto: ciérralo antes de abrir otro")
     register = body.caja.strip()
     main = default_store(db).id
-    store_id = store_scope(db, user) or (body.store_id if module_on(db, "multi_tienda") else None) or main
+    store_id = main
     if not db.get(Store, store_id):
         raise HTTPException(400, "Tienda no válida")
     busy_q = db.query(CashShift).filter(CashShift.status == "Abierto", func.lower(CashShift.register) == register.lower())

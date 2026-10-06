@@ -35,10 +35,10 @@ def purchase_body(client, auth, **extra):
 # ───────── los paquetes ─────────
 def test_los_paquetes_cubren_los_modulos_del_esquema():
     assert set(licencia.PLANS["profesional"]) == {"multi_warehouse", "reports", "backup", "api", "importar_excel", "etiquetas"}
-    assert {"whatsapp", "email", "offline", "compras", "advanced_credit"} <= set(licencia.PLANS["empresarial"]) and set(PRO) <= set(EMP)
+    assert {"email", "offline", "compras", "advanced_credit"} <= set(licencia.PLANS["empresarial"]) and set(PRO) <= set(EMP)
     assert licencia.PLANS["basico"] == [] and set(licencia.PLANS["todo"]) == set(licencia.MODULES) and len(licencia.MODULES) <= licencia.ALL_BIT
     assert [licencia.plan_of(licencia.PLANS[p]) for p in ("basico", "profesional", "empresarial", "todo")] == ["basico", "profesional", "empresarial", "todo"]
-    assert licencia.plan_of(["whatsapp"]) == "basico" and licencia.plan_of(PRO + ["whatsapp"]) == "profesional"  # un extra suelto no sube el paquete
+    assert licencia.plan_of(["email"]) == "basico" and licencia.plan_of(PRO + ["email"]) == "profesional"  # un extra suelto no sube el paquete
 
 
 def test_la_clave_todo_incluye_los_modulos_futuros(keys, monkeypatch):
@@ -85,7 +85,7 @@ def test_basico_lo_esencial_funciona_y_lo_adicional_se_bloquea(client, auth, key
     for r in (client.get("/api/reports/ventas-detallado?start=2026-01-01&end=2026-01-31", headers=auth), client.get("/api/reports/profit?period=all", headers=auth),
               client.put("/api/backups/settings", json={"enabled": True, "hour": 12, "keep": 5, "folder": "", "copy_folder": ""}, headers=auth),
               client.put("/api/settings/email", json={"host": "h", "port": 587}, headers=auth), client.post("/api/settings/email/test", json={"to": "a@b.hn"}, headers=auth),
-              client.put("/api/settings/whatsapp", json={"url": "http://127.0.0.1:8002"}, headers=auth), client.get("/api/labels/products", headers=auth),
+              client.get("/api/labels/products", headers=auth),
               client.get("/api/replenishment", headers=auth), client.post("/api/api-keys", json={"name": "ERP"}, headers=auth),
               client.get("/api/payables", headers=auth), client.get("/api/reports/cxp.csv", headers=auth),
               client.post("/api/purchases", json=purchase_body(client, auth, status="Pendiente"), headers=auth),
@@ -93,7 +93,6 @@ def test_basico_lo_esencial_funciona_y_lo_adicional_se_bloquea(client, auth, key
         assert blocked(r), r.request.url
     doc = invoice(client, auth, [line(p, 1)]).json()
     assert blocked(client.post(f"/api/documents/{doc['id']}/email", json={"to": "a@b.hn"}, headers=auth))
-    assert blocked(client.post(f"/api/documents/{doc['id']}/whatsapp", json={"phone": "98389988", "message": "Hola"}, headers=auth))
     assert client.get("/api/dashboard/insights", headers=auth).json()["margin"] is None  # el margen es de reportes avanzados
     # el crédito avanzado (límite y bloqueo por mora) no se aplica, pero vender al crédito sí se puede
     cid = new_client(client, auth, credit_limit=100)
@@ -121,13 +120,13 @@ def test_profesional_abre_lo_suyo_y_deja_cerrado_lo_empresarial(client, auth, ke
     assert client.get("/api/labels/products", headers=auth).status_code == 200
     assert client.post("/api/warehouses", json={"code": "X1", "name": "Otra", "address": ""}, headers=auth).status_code == 200
     assert client.post("/api/api-keys", json={"name": "ERP"}, headers=auth).status_code == 200
-    for r in (client.put("/api/settings/email", json={"host": "h", "port": 587}, headers=auth), client.put("/api/settings/whatsapp", json={"url": "http://127.0.0.1:8002"}, headers=auth),
+    for r in (client.put("/api/settings/email", json={"host": "h", "port": 587}, headers=auth),
               client.get("/api/payables", headers=auth), client.get("/api/replenishment", headers=auth),
               client.post("/api/purchases", json=purchase_body(client, auth, status="Pendiente"), headers=auth)):
         assert blocked(r), r.request.url
 
 
-def test_empresarial_abre_compras_correo_whatsapp_y_credito_avanzado(client, auth, keys, login):
+def test_empresarial_abre_compras_correo_y_credito_avanzado(client, auth, keys, login):
     activate(client, auth, keys, tuple(EMP))
     p = product(client, auth, "CEM-050")
     order = client.post("/api/purchases", json=purchase_body(client, auth, status="Pendiente"), headers=auth)
@@ -137,7 +136,6 @@ def test_empresarial_abre_compras_correo_whatsapp_y_credito_avanzado(client, aut
     assert client.get("/api/payables", headers=auth).json()["total"] > 0
     assert client.post(f"/api/purchases/{credit['id']}/payments", json={"amount": 10, "method": "Efectivo"}, headers=auth).status_code == 200
     assert client.put("/api/settings/email", json={"host": "smtp.x.hn", "port": 587, "password": "abc"}, headers=auth).json()["available"] is True
-    assert client.put("/api/settings/whatsapp", json={"url": "http://127.0.0.1:8002"}, headers=auth).status_code == 200
     assert client.get("/api/replenishment", headers=auth).status_code == 200
     # crédito avanzado: ahora sí hay límite
     cid = new_client(client, auth, credit_limit=100)
@@ -220,7 +218,7 @@ def test_generador_con_paquetes(tmp_path, keys, monkeypatch):
     gen = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gen)
     assert gen.resolver_modulos("profesional", []) == PRO
-    assert gen.resolver_modulos("profesional", ["whatsapp", "rentabilidad"]) == PRO + ["whatsapp"]  # nombres anteriores aceptados, sin repetir lo que el paquete ya trae
+    assert gen.resolver_modulos("profesional", ["email", "rentabilidad"]) == PRO + ["email"]  # nombres anteriores aceptados, sin repetir lo que el paquete ya trae
     assert gen.resolver_modulos("", ["multi_bodega", "ventas_offline"]) == ["multi_warehouse", "offline"]
     assert gen.resolver_modulos("todo", []) == ["todo"] and gen.resolver_modulos("all", ["x"]) == ["todo"]
     with pytest.raises(SystemExit):
@@ -267,6 +265,6 @@ def test_clave_basica_termina_la_prueba_y_deja_solo_lo_incluido(keys):
     key = issue(keys, inst, modules=())
     state = licencia.evaluate(inst, key, date.today(), date.today())  # prueba recién empezada
     assert state["valid"] and state["plan"] == "basico" and state["plan_label"] == "Básico" and not state["trial"]["active"]
-    assert state["active"]["turnos_caja"] and not state["active"]["compras"] and not state["active"]["multi_tienda"]
+    assert state["active"]["turnos_caja"] and not state["active"]["compras"]
     sin_clave = licencia.evaluate(inst, "", date.today(), date.today())  # sin clave y en prueba: todo abierto
     assert sin_clave["trial"]["active"] and sin_clave["active"]["compras"]

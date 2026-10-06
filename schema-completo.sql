@@ -131,8 +131,6 @@ CREATE TABLE IF NOT EXISTS company (
 	smtp_password VARCHAR(200), 
 	smtp_from VARCHAR(160), 
 	smtp_security VARCHAR(10), 
-	wa_url VARCHAR(255), 
-	wa_key VARCHAR(200), 
 	install_id VARCHAR(20), 
 	license_key TEXT, 
 	trial_start DATE, 

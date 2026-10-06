@@ -1,4 +1,4 @@
-"""Cifrado de claves guardadas en la base de datos (clave del correo, clave de OpenWA).
+"""Cifrado de claves guardadas en la base de datos (clave del correo).
 
 Se cifran con una llave derivada del `.secret` de este equipo, que NO está en la base ni en los respaldos: quien se lleve la base de
 datos o un respaldo no puede leerlas. Si se restaura en otro equipo hay que copiar también el archivo `.secret` (o volver a escribirlas).

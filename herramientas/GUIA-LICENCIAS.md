@@ -5,7 +5,7 @@
 |---|---|---|
 | Básico | no necesita (opcional: `--plan basico`, opción 1 del menú) | facturación SAR, cotizaciones, POS, clientes, inventario (1 bodega), compras de contado, usuarios, turnos, reportes SAR, respaldo manual |
 | Profesional | `--plan profesional` | multi_warehouse, reports, backup, api, importar_excel, etiquetas |
-| Empresarial | `--plan empresarial` | todo lo anterior + whatsapp, email, offline, compras, advanced_credit, reabastecimiento, docs_fiscales, multi_tienda |
+| Empresarial | `--plan empresarial` | todo lo anterior + email, offline, compras, advanced_credit, reabastecimiento, docs_fiscales |
 | Todo | `--plan todo` | todos los módulos, **incluidos los que se creen después** |
 
 Para cambiar qué módulo pertenece a qué plan, edita `PLANS` en `app/licencia.py` (y `tier` se ajusta solo en la pantalla). Las claves ya emitidas llevan la lista de módulos, así que **cambiar un plan no afecta a las claves viejas**; solo `--plan todo` se actualiza solo.
@@ -22,7 +22,7 @@ Para cambiar qué módulo pertenece a qué plan, edita `PLANS` en `app/licencia.
 python herramientas/generador-de-claves.py emitir --cliente "Ferretería Toty Depot" --instalacion ABCD-EFGH --plan empresarial --usuarios 5
 ```
    Sin argumentos el generador abre un menú: 1 Básico · 2 Profesional · 3 Empresarial · 4 Todo · 5 Personalizado (módulos sueltos). Una **clave Básica** (`--plan basico`) sirve para cerrar la prueba de 30 días de una vez y dejar al cliente en Básico con sus límites (usuarios, cajas) o con vencimiento. En general una clave válida, del plan que sea, da por terminada la prueba.
-   Opciones: `--plan basico|profesional|empresarial|todo`, `--modulos whatsapp,api` (se suman al plan, aceptan los nombres anteriores), `--bodegas N`, `--tiendas N`, `--usuarios N`, `--cajas N` (0 = sin límite), `--meses 12` o `--vence AAAA-MM-DD` (por defecto perpetua).
+   Opciones: `--plan basico|profesional|empresarial|todo`, `--modulos email,api` (se suman al plan, aceptan los nombres anteriores), `--bodegas N`, `--usuarios N`, `--cajas N` (0 = sin límite), `--meses 12` o `--vence AAAA-MM-DD` (por defecto perpetua).
 3. Envíale la clave; la pega en Configuración › Licencia y módulos › Activar clave. Todo queda anotado en `herramientas/claves-emitidas.csv`.
 4. Para ampliar (pasar de Profesional a Empresarial): emite otra clave con el **mismo código de instalación**; la nueva reemplaza a la anterior.
 

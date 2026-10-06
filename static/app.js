@@ -17,7 +17,7 @@ setInterval(() => {
 }, 20000);
 let LIC_ACTIVE = {}; // módulos activos según la licencia (se guarda en el equipo para el modo sin conexión)
 const modOn = (name) => LIC_ACTIVE[name] !== false;
-const MOD_LOCKED = { whatsapp: "WhatsApp", multi_warehouse: "Multi-bodega", multi_tienda: "Multi-tienda", offline: "Modo sin conexión", importar_excel: "Importar desde Excel", reports: "Reportes avanzados",
+const MOD_LOCKED = { multi_warehouse: "Multi-bodega", offline: "Modo sin conexión", importar_excel: "Importar desde Excel", reports: "Reportes avanzados",
   advanced_credit: "Crédito avanzado", reabastecimiento: "Reabastecimiento", docs_fiscales: "Notas de débito", etiquetas: "Etiquetas y códigos de barras", backup: "Respaldos automáticos",
   api: "API REST", email: "Correo electrónico", compras: "Compras" };
 const lockedPopup = (name) => alertPopup(`El módulo «${MOD_LOCKED[name] || name}» no está activado. Pide tu clave y actívala en Configuración › Licencia.`, "Módulo adicional");
@@ -653,9 +653,6 @@ function bindDocButtons(root) {
   $$("[data-ticket]", root).forEach((b) => b.onclick = () => safePrint(printTicket, b.dataset.ticket));
   $$("[data-pay]", root).forEach((b) => b.onclick = () => payDoc(b.dataset.pay));
   $$("[data-quote-invoice]", root).forEach((b) => b.onclick = () => invoiceQuote(b.dataset.quoteInvoice));
-  $$("[data-wa-remind]", root).forEach((b) => b.onclick = async () => {
-    try { whatsappDoc((await api("/api/documents/" + b.dataset.waRemind)).document, true); } catch (err) { toast(err.message, "err"); }
-  });
 }
 
 async function renderHome(root) {
@@ -742,13 +739,12 @@ function docRowActions(r, compact = false) {
   return `<button class="btn ghost sm" data-view-doc="${r.id}">Ver</button>` +
     (open && can("cobrar") ? `<button class="btn sm" data-pay="${r.id}">Cobrar</button>` : "") +
     (quoteOpen && can("facturar") ? `<button class="btn sm" data-quote-invoice="${r.id}">Facturar</button>` : "") +
-    (compact && open && r.balance > 0.004 ? `<button class="btn ghost sm" data-wa-remind="${r.id}" title="Recordatorio de cobro por WhatsApp">WhatsApp</button>` : "") +
     (compact ? "" : `<button class="btn ghost sm" data-print="${r.id}">Imprimir</button>`);
 }
 
 async function renderDocs(root, mode) {
   const cxc = mode === "cxc";
-  const [rows, stores] = await Promise.all([api("/api/documents" + (cxc ? "?kind=factura" : "")), api("/api/stores").catch(() => [])]);
+  const [rows, stores] = await Promise.all([api("/api/documents" + (cxc ? "?kind=factura" : "")), Promise.resolve([])]);
   const mainStore = (stores.find((x) => x.main) || {}).id;
   const list = rows.filter((r) => {
     if (cxc) return OPEN_STATES.includes(r.status);
@@ -814,7 +810,7 @@ async function showDoc(id) {
       ${(d.debit_notes || []).length ? `<h4>Notas de débito</h4>${table(["NOTA DE DÉBITO", "FECHA", "ESTADO", "MONTO", ""], d.debit_notes.map((n) => `<tr><td>${esc(n.number)}</td><td>${when(n.issued_at)}</td><td>${pill(n.status)}</td><td>${money(n.total)}</td><td><button type="button" class="btn ghost sm" data-open-doc="${n.id}">Ver</button></td></tr>`))}` : ""}
       <div class="actions" style="margin-top:12px">
         <button type="button" class="btn" data-a="print">Imprimir</button><button type="button" class="btn" data-a="ticket">Ticket</button>
-        <button type="button" class="btn" data-a="pdf">PDF</button>${can("cotizar", "facturar", "cobrar") ? `<button type="button" class="btn" data-a="email">Enviar por correo</button><button type="button" class="btn" data-a="wa">WhatsApp</button>` : ""}
+        <button type="button" class="btn" data-a="pdf">PDF</button>${can("cotizar", "facturar", "cobrar") ? `<button type="button" class="btn" data-a="email">Enviar por correo</button>` : ""}
         ${open && can("cobrar") ? `<button type="button" class="btn primary" data-a="pay">Cobrar</button>` : ""}
         ${quoteOpen && can("facturar") ? `<button type="button" class="btn primary" data-a="invoice">Convertir en factura</button>` : ""}
         ${quoteOpen && can("cotizar") ? `<select id="quote-state" aria-label="Estado de la cotización">${["Pendiente", "Cotización enviada", "Orden de venta"].map((s) => `<option ${s === d.stored_status ? "selected" : ""}>${s}</option>`).join("")}</select>` : ""}
@@ -829,7 +825,6 @@ async function showDoc(id) {
       on("ticket", () => safePrint(printTicket, d.id));
       on("pdf", () => downloadApi(`/api/documents/${d.id}/pdf`, `${d.number}.pdf`).catch((err) => toast(err.message, "err")));
       on("email", () => emailDoc(d));
-      on("wa", () => whatsappDoc(d));
       on("pay", () => payDoc(d.id));
       on("invoice", () => invoiceQuote(d.id));
       on("credit", () => { closeModal(); newDocument("nota", { from: d }); });
@@ -845,64 +840,6 @@ async function showDoc(id) {
 }
 
 /** Envía el documento en PDF por correo (al correo del cliente si lo tiene). */
-/* ───────── WhatsApp ───────── */
-/** Teléfono para wa.me: solo dígitos; los números de 8 dígitos son de Honduras (+504). */
-const waPhone = (raw) => { const d = String(raw || "").replace(/\D/g, ""); return d.length === 8 ? "504" + d : d; };
-const companyName = () => ($("#co-name")?.textContent || "").trim();
-/** Mensaje para el cliente: la factura con su total y saldo, o un recordatorio de cobro si está vencida. */
-function waMessage(d, reminder = false) {
-  const who = companyName();
-  const hello = `Buen día ${d.client}, le saluda ${who}.`;
-  if (reminder) {
-    const due = d.due_date ? dateOnly(d.due_date) : "";
-    return `${hello}\nLe recordamos que la factura No. ${d.number} tiene un saldo pendiente de ${money(d.balance)}${due ? ` (vencimiento ${due})` : ""}.\nPuede pagar en nuestra tienda o por transferencia. Si ya realizó el pago, por favor ignore este mensaje. ¡Gracias!`;
-  }
-  if (d.kind === "cotizacion") return `${hello}\nLe compartimos la cotización No. ${d.number} por ${money(d.total)}${d.validity_date ? `, válida hasta el ${dateOnly(d.validity_date)}` : ""}.\nQuedamos a sus órdenes.`;
-  if (d.kind === "debito") return `${hello}\nLe compartimos la nota de débito No. ${d.number} por ${money(d.total)}${d.ref_number ? ` aplicada a la factura ${d.ref_number}` : ""}.`;
-  if (d.kind === "nota") return `${hello}\nLe compartimos la nota de crédito No. ${d.number} por ${money(d.total)}${d.ref_number ? ` aplicada a la factura ${d.ref_number}` : ""}.`;
-  const owed = d.balance > 0.004 && d.payment_terms !== "Contado";
-  return `${hello}\nLe compartimos su factura No. ${d.number} por ${money(d.total)}.${owed ? `\nSaldo pendiente: ${money(d.balance)}${d.due_date ? `, vence el ${dateOnly(d.due_date)}` : ""}.` : ""}\n¡Gracias por su compra!`;
-}
-
-async function whatsappDoc(d, reminder = false) {
-  if (!modOn("whatsapp")) return lockedPopup("whatsapp");
-  const direct = (await api("/api/whatsapp/status").catch(() => ({}))).configured; // OpenWA configurado: se envía desde Comandia
-  const canShare = !direct && !!(navigator.canShare && window.File);
-  openModal(reminder ? `Recordatorio de cobro · ${d.number}` : `WhatsApp · ${d.kind_label} ${d.number}`, [
-    { type: "info", html: direct
-      ? (reminder ? "Se envía el recordatorio como mensaje desde el WhatsApp de la empresa (OpenWA)." : "Se envía el PDF con el mensaje desde el WhatsApp de la empresa (OpenWA).")
-      : (reminder ? "Se abre WhatsApp con el recordatorio listo para enviar."
-        : `Se abre WhatsApp (en la computadora o el celular) con el mensaje listo y se descarga el PDF para que lo adjuntes con el clip 📎.${canShare ? " Con «Compartir PDF» se envía el archivo directo si tu navegador lo permite." : ""} Para enviarlo directo desde Comandia, configura OpenWA en Configuración › WhatsApp.`) },
-    { name: "phone", label: "Celular del cliente", value: d.client_phone || "", full: true, required: direct, placeholder: direct ? "9999-9999" : "9999-9999 (vacío = eliges el contacto en WhatsApp)" },
-    { name: "message", label: "Mensaje", type: "textarea", value: waMessage(d, reminder), full: true, required: true },
-  ], async (b) => {
-    if (direct) {
-      await api(`/api/documents/${d.id}/whatsapp`, { method: "POST", body: { phone: b.phone, message: b.message, attach: !reminder } });
-      toast(reminder ? "Recordatorio enviado por WhatsApp" : "Enviado por WhatsApp con el PDF adjunto");
-      return;
-    }
-    const phone = waPhone(b.phone);
-    if (b.phone.trim() && phone.length < 8) throw new Error("Revisa el número de celular");
-    if (!reminder) await downloadApi(`/api/documents/${d.id}/pdf`, `${d.number}.pdf`).catch(() => {});
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(b.message)}`, "_blank", "noopener");
-    return "stay";
-  }, { submitLabel: direct ? "Enviar por WhatsApp" : "Abrir WhatsApp", mount: (form) => {
-    if (reminder || !canShare) return;
-    const btn = document.createElement("button");
-    btn.type = "button"; btn.className = "btn full"; btn.textContent = "Compartir PDF";
-    $("button[type=submit]", form).after(btn);
-    btn.onclick = async () => {
-      try {
-        const res = await fetch(`/api/documents/${d.id}/pdf`, { headers: { Authorization: "Bearer " + token } });
-        if (!res.ok) throw new Error("No se pudo generar el PDF");
-        const file = new File([await res.blob()], `${d.number}.pdf`, { type: "application/pdf" });
-        if (!navigator.canShare({ files: [file] })) throw new Error("Este navegador no permite compartir archivos: usa «Abrir WhatsApp» y adjunta el PDF descargado");
-        await navigator.share({ files: [file], text: $("[name=message]", form).value });
-      } catch (err) { if (err.name !== "AbortError") $("#modal-error").textContent = err.message; }
-    };
-  } });
-}
-
 function emailDoc(d) {
   if (!modOn("email")) return lockedPopup("email");
   openModal(`Enviar ${d.kind_label.toLowerCase()} ${d.number}`, [
@@ -1065,7 +1002,7 @@ async function newDocument(kind, opts = {}) {
       <div class="odoo-top">
         <div><div class="muted">Ventas / ${titles[kind]}</div><h2>${saved ? esc(saved.number) : "Nuevo"}</h2></div>
         <div class="odoo-actions">
-          ${saved ? `<button class="btn primary" id="d-print">Imprimir</button><button class="btn" id="d-ticket">Ticket</button><button class="btn" id="d-email">Correo</button><button class="btn" id="d-wa">WhatsApp</button>${kind === "factura" && can("cobrar") ? `<button class="btn" id="d-pay">Cobrar</button>` : ""}<button class="btn" id="d-new">Crear otro</button>`
+          ${saved ? `<button class="btn primary" id="d-print">Imprimir</button><button class="btn" id="d-ticket">Ticket</button><button class="btn" id="d-email">Correo</button>${kind === "factura" && can("cobrar") ? `<button class="btn" id="d-pay">Cobrar</button>` : ""}<button class="btn" id="d-new">Crear otro</button>`
             : `<button class="btn primary" id="d-save">${kind === "factura" ? "Guardar e imprimir factura" : kind === "nota" ? "Guardar e imprimir nota" : "Guardar e imprimir cotización"}</button>${kind === "factura" && can("cobrar") ? `<button class="btn" id="d-savepay">Guardar y cobrar</button>` : ""}`}
           <button class="btn" id="d-back">Volver</button>
         </div>
@@ -1223,7 +1160,6 @@ async function newDocument(kind, opts = {}) {
     if ($("#d-print")) $("#d-print").onclick = () => safePrint(printDoc, saved.id);
     if ($("#d-ticket")) $("#d-ticket").onclick = () => safePrint(printTicket, saved.id);
     if ($("#d-email")) $("#d-email").onclick = () => emailDoc(saved);
-    if ($("#d-wa")) $("#d-wa").onclick = () => whatsappDoc(saved);
     if ($("#d-pay")) $("#d-pay").onclick = () => payDoc(saved.id);
     if ($("#d-new")) $("#d-new").onclick = () => (from ? goto("ventas") : newDocument(kind));
     $("#d-back").onclick = () => goto(kind === "factura" || kind === "cotizacion" || kind === "nota" ? "ventas" : "inicio");
@@ -1383,26 +1319,15 @@ async function productForm(p) {
 
 /* ───────── bodegas ───────── */
 async function renderWarehouses(root) {
-  const [rows, products, lic, stores] = await Promise.all([api("/api/warehouses"), api("/api/products"), api("/api/license").catch(() => null), api("/api/stores").catch(() => [])]);
+  const [rows, products, lic, stores] = await Promise.all([api("/api/warehouses"), api("/api/products"), api("/api/license").catch(() => null), Promise.resolve([])]);
   const allowed = lic ? lic.warehouses_allowed : null;
   const whPill = allowed === null || allowed === undefined ? "" : ` <span class="pill ${rows.length >= allowed ? "pendiente" : "activo"}" title="Para más bodegas activa el módulo Multi-bodega en Configuración › Licencia">${rows.length} de ${allowed}${rows.length >= allowed ? " · límite" : ""}</span>`;
-  const stAllowed = lic ? lic.stores_allowed : null;
-  const stPill = stAllowed === null || stAllowed === undefined ? "" : ` <span class="pill ${stores.length >= stAllowed ? "pendiente" : "activo"}" title="Para más tiendas activa el módulo Multi-tienda en Configuración › Licencia">${stores.length} de ${stAllowed}${stores.length >= stAllowed ? " · límite" : ""}</span>`;
-  const storesHtml = can("config") || stores.length > 1 ? `<div class="section-head"><h2>Tiendas${stPill}</h2><div class="actions">${can("config") ? `<button class="btn primary" id="addstore">Nueva tienda</button>` : ""}</div></div>
-    <p class="muted">Cada tienda usa los CAI de su <strong>establecimiento</strong> (su código de 3 dígitos). Con más de una tienda, carga un CAI por cada una en Configuración y asigna sus bodegas y su personal.</p>
-    <div class="grid-4" style="margin-bottom:18px">${stores.map((x) => `<div class="card kpi"><small>Establecimiento ${esc(x.code)}${x.main ? " · principal" : ""}</small><strong>${esc(x.name)}</strong><div class="muted">${esc(x.address)}<br>${x.warehouses} bodega(s) · ${x.cai} CAI activo(s)<br>Ventas del mes: ${money(x.sales_month)}</div>
-      ${can("config") ? `<div class="actions" style="margin-top:10px"><button class="btn sm" data-estore="${x.id}">Editar</button>${x.main ? "" : `<button class="btn danger sm" data-dstore="${x.id}">Desactivar</button>`}</div>` : ""}</div>`).join("")}</div>` : "";
-  root.innerHTML = `${storesHtml}<div class="section-head"><h2>Bodegas${whPill}</h2><div class="actions">${can("inventario") ? `<button class="btn" id="move">Trasladar entre bodegas</button>` : ""}${can("catalogo") ? `<button class="btn primary" id="add">Nueva bodega</button>` : ""}</div></div>
+  root.innerHTML = `<div class="section-head"><h2>Bodegas${whPill}</h2><div class="actions">${can("inventario") ? `<button class="btn" id="move">Trasladar entre bodegas</button>` : ""}${can("catalogo") ? `<button class="btn primary" id="add">Nueva bodega</button>` : ""}</div></div>
     <div class="grid-4">${rows.map((w) => `<div class="card kpi"><small>${esc(w.code)}${stores.length > 1 ? " · " + esc(w.store || "") : ""}</small><strong>${esc(w.name)}</strong><div class="muted">${esc(w.address)}<br>${w.lines} productos con existencia</div>
       <div class="actions" style="margin-top:10px"><button class="btn sm" data-stock="${w.id}">Existencias</button>${can("catalogo") ? `<button class="btn sm" data-edit="${w.id}">Editar</button><button class="btn danger sm" data-off="${w.id}">Desactivar</button>` : ""}</div></div>`).join("")}</div>`;
   const whForm = (w) => openModal(w ? "Editar bodega" : "Nueva bodega", [{ name: "code", label: "Código", value: w?.code, required: true }, { name: "name", label: "Nombre", value: w?.name, required: true }, { name: "address", label: "Dirección", value: w?.address, full: true },
     ...(stores.length > 1 ? [{ name: "store_id", label: "Tienda", type: "select", value: w?.store_id || (stores.find((x) => x.main) || {}).id, options: stores.map((x) => ({ value: x.id, label: `${x.code} · ${x.name}` })) }] : [])],
     (b) => api(w ? "/api/warehouses/" + w.id : "/api/warehouses", { method: w ? "PUT" : "POST", body: { ...b, store_id: b.store_id ? +b.store_id : null } }));
-  const storeForm = (x) => openModal(x ? "Editar tienda" : "Nueva tienda", [{ name: "code", label: "Código / establecimiento (3 dígitos)", value: x?.code, required: true, hint: "Es el primer bloque del número fiscal de sus facturas: 002-001-01-…" }, { name: "name", label: "Nombre", value: x?.name, required: true }, { name: "address", label: "Dirección", value: x?.address, full: true }],
-    (b) => api(x ? "/api/stores/" + x.id : "/api/stores", { method: x ? "PUT" : "POST", body: b }));
-  if ($("#addstore")) $("#addstore").onclick = () => storeForm(null);
-  $$("[data-estore]").forEach((b) => b.onclick = () => storeForm(stores.find((x) => x.id === +b.dataset.estore)));
-  $$("[data-dstore]").forEach((b) => b.onclick = async () => { if (await askConfirm("¿Desactivar esta tienda? Debe estar sin bodegas activas.", "Desactivar", true)) run(() => api("/api/stores/" + b.dataset.dstore, { method: "DELETE" }), "Tienda desactivada"); });
   if ($("#add")) $("#add").onclick = () => whForm(null);
   $$("[data-edit]").forEach((b) => b.onclick = () => whForm(rows.find((w) => w.id === +b.dataset.edit)));
   $$("[data-off]").forEach((b) => b.onclick = async () => { if (await askConfirm("¿Desactivar esta bodega? Debe estar sin existencias.", "Desactivar", true)) run(() => api("/api/warehouses/" + b.dataset.off, { method: "DELETE" }), "Bodega desactivada"); });
@@ -1739,7 +1664,7 @@ function profitHtml(pr) {
 
 async function renderReports(root) {
   const sq = reportStore ? `&store_id=${reportStore}` : "";
-  const [data, profit, stores] = await Promise.all([api(`/api/reports?period=${period}&series=${seriesFilter}${sq}`), api(`/api/reports/profit?period=${period}`).catch(() => null), api("/api/stores").catch(() => [])]);
+  const [data, profit, stores] = await Promise.all([api(`/api/reports?period=${period}&series=${seriesFilter}${sq}`), api(`/api/reports/profit?period=${period}`).catch(() => null), Promise.resolve([])]);
   const v = data.libro_ventas, c = data.libro_compras;
   root.innerHTML = `<div class="section-head"><h2>Reportes SAR</h2><div class="actions"><select id="period" aria-label="Período"><option value="month">Este mes</option><option value="quarter">Trimestre</option><option value="year">Año</option><option value="all">Todo</option></select>${stores.length > 1 ? `<select id="rstore" aria-label="Tienda"><option value="">Todas las tiendas</option>${stores.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>` : ""}<select id="series" aria-label="Serie"><option value="all">Todas las series</option><option value="normal">Normal</option><option value="E">Serie E</option></select></div></div>
     <div class="grid-2"><div class="card"><h3>Ventas netas por cliente</h3>${table(["CLIENTE", "TOTAL"], data.by_client.map((r) => `<tr><td>${esc(r.name)}</td><td class="nowrap num">${money(r.total)}</td></tr>`), "Sin datos en el período")}</div>
@@ -2065,7 +1990,7 @@ async function renderShift(root) {
   if (!sh) {
     let reg = last_register;
     try { reg = localStorage.getItem("comandia_caja") || reg; } catch (err) { /* nada */ }
-    const stores = user.store_id ? [] : await api("/api/stores").catch(() => []);
+    const stores = user.store_id ? [] : await Promise.resolve([]);
     root.innerHTML = `<div class="section-head"><h2>Mi turno de caja</h2></div>
       <div class="card shift-open"><h3>Abrir turno</h3>
         <p class="muted">Al empezar a cobrar, abre tu turno con el fondo (el sencillo que te entregan). Durante el turno registra los retiros a la caja fuerte, los gastos que pagues de la gaveta y los ingresos de efectivo. Al terminar, cuenta y cierra: el sistema te dice si sobra o falta.</p>
@@ -2137,7 +2062,7 @@ async function renderShift(root) {
 }
 
 async function renderShiftHistory(root) {
-  const [data, stores] = await Promise.all([api("/api/shifts" + cashQuery()), api("/api/stores").catch(() => [])]);
+  const [data, stores] = await Promise.all([api("/api/shifts" + cashQuery()), Promise.resolve([])]);
   root.innerHTML = `<div class="section-head"><h2>Turnos de caja</h2><div class="actions"><input type="date" id="sh-day" value="${esc(data.day)}" aria-label="Día" />${stores.length > 1 ? `<select id="sh-store-f" aria-label="Tienda"><option value="">Todas las tiendas</option>${stores.map((x) => `<option value="${x.id}" ${x.id === +cashFilter.store_id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>` : ""}</div></div>
     <p class="muted">Turnos abiertos ese día y los que siguen abiertos. La diferencia es lo que sobró (+) o faltó (−) al cerrar.</p>
     <div class="card">${table(["CAJA", ...(stores.length > 1 ? ["TIENDA"] : []), "CAJERO", "ABIERTO", "CERRADO", "FONDO", "COBRADO", "EFECTIVO ESPERADO", "CONTADO", "DIFERENCIA", ""], data.rows.map((r) => `<tr><td><strong>${esc(r.register)}</strong></td>${stores.length > 1 ? `<td>${esc(r.store)}</td>` : ""}<td>${esc(r.user)}</td><td>${when(r.opened_at)}</td><td>${r.closed_at ? when(r.closed_at) : pill("Abierto")}</td>
@@ -2180,7 +2105,7 @@ async function printShift(sh) {
 }
 
 async function renderDayClose(root) {
-  const [c, stores] = await Promise.all([api("/api/cash/close" + cashQuery()), api("/api/stores").catch(() => [])]);
+  const [c, stores] = await Promise.all([api("/api/cash/close" + cashQuery()), Promise.resolve([])]);
   const who = c.sees_all ? (c.users.find((u) => u.id === +cashFilter.user_id)?.name || "Todos los usuarios") : user.name;
   // Las formas sin movimiento (cheque, depósito) solo se muestran si tienen cobros; efectivo, tarjeta y transferencia siempre.
   const methods = c.by_method.filter((m) => m.method !== "Retención ISV" && (m.total || ["Efectivo", "Tarjeta", "Transferencia"].includes(m.method)))
@@ -2341,7 +2266,7 @@ async function renderAudit(root) {
 /* ───────── configuración ───────── */
 async function renderSettings(root) {
   const canCfg = can("config"), canUsers = can("usuarios");
-  const [s, users, roleInfo, backups, mail, wa, lic, stores, apiInfo] = await Promise.all([api("/api/settings"), canUsers ? api("/api/users") : [], canUsers ? api("/api/roles") : null, canCfg ? api("/api/backups") : null, canCfg ? api("/api/settings/email") : null, canCfg ? api("/api/settings/whatsapp") : null, canCfg ? api("/api/license") : null, canUsers ? api("/api/stores").catch(() => []) : [], canCfg ? api("/api/api-keys").catch(() => null) : null]);
+  const [s, users, roleInfo, backups, mail, lic, stores, apiInfo] = await Promise.all([api("/api/settings"), canUsers ? api("/api/users") : [], canUsers ? api("/api/roles") : null, canCfg ? api("/api/backups") : null, canCfg ? api("/api/settings/email") : null, canCfg ? api("/api/license") : null, [], canCfg ? api("/api/api-keys").catch(() => null) : null]);
   STORES = stores;
   const cfgHtml = `<div class="card"><h3>Datos del emisor</h3><form id="set" class="form">
     <label>Nombre comercial<input name="name" value="${esc(s.name)}" required /></label>
@@ -2379,8 +2304,8 @@ async function renderSettings(root) {
   const isMaster = user.role === "Master";
   const resetHtml = !isMaster ? "" : `<div class="card danger-zone" style="margin-top:12px"><div class="section-head"><h3>Instalar en un cliente nuevo</h3><button class="btn danger" id="reset-db">Limpiar base de datos…</button></div>
     <p class="muted">Borra los datos de demostración o de prueba para entregar el sistema limpio. Solo un Master puede hacerlo, con su clave, y antes se guarda un respaldo automático. No se permite si ya hay facturas emitidas con un CAI real del SAR: esas deben conservarse por ley.</p></div>`;
-  root.innerHTML = `<h2>Configuración</h2>${canCfg ? cfgHtml + licenseHtml(lic) + mailHtml(mail) + waHtml(wa, !lic.module_list.find((m) => m.id === "whatsapp").active) + backupsHtml(backups) + apiHtml(apiInfo) : ""}${canUsers ? usersHtml : ""}${resetHtml}`;
-  if (canCfg) { bindConfig(s); bindLicense(); bindMail(mail); bindWhatsApp(); bindBackups(backups); bindApi(); }
+  root.innerHTML = `<h2>Configuración</h2>${canCfg ? cfgHtml + licenseHtml(lic) + mailHtml(mail) + backupsHtml(backups) + apiHtml(apiInfo) : ""}${canUsers ? usersHtml : ""}${resetHtml}`;
+  if (canCfg) { bindConfig(s); bindLicense(); bindMail(mail); bindBackups(backups); bindApi(); }
   if (canUsers) bindUsers(users, roleInfo);
   if (isMaster) $("#reset-db").onclick = resetDatabase;
 }
@@ -2540,41 +2465,6 @@ function bindApi() {
     return "stay";
   });
   $$("[data-revoke]").forEach((b) => b.onclick = async () => { if (await askConfirm("¿Revocar esta llave? Los sistemas que la usan dejarán de funcionar.", "Revocar", true)) run(() => api("/api/api-keys/" + b.dataset.revoke, { method: "DELETE" }), "Llave revocada"); });
-}
-
-/* ───────── WhatsApp con OpenWA ───────── */
-function waHtml(w, locked = false) {
-  return `<div class="card" style="margin-top:12px" id="wa-card"><div class="section-head"><h3>WhatsApp (OpenWA)</h3><div class="actions">${w.configured ? `<span class="pill activo">Configurado</span>` : `<span class="pill inactivo">Sin configurar</span>`}</div></div>
-    ${locked ? `<p class="warn-note">Módulo <strong>«WhatsApp directo (OpenWA)»</strong> sin activar. Actívalo con una clave en <strong>Licencia y módulos</strong> (más arriba). Mientras tanto, el botón WhatsApp abre WhatsApp con el mensaje listo.</p>` : ""}
-    <p class="muted">Con <strong>OpenWA</strong> (<span class="mono">@open-wa/wa-automate</span>) las facturas, cotizaciones y recordatorios de cobro se envían <strong>directo desde el WhatsApp de la empresa</strong>, con el PDF adjunto, sin abrir WhatsApp Web. OpenWA corre aparte en este mismo equipo o en otro de tu red: instálalo con <span class="mono">openwa\\instalar-openwa.bat</span> e iníciala con <span class="mono">openwa\\iniciar-openwa.bat</span> (puerto 8002 y una clave), escanea el código QR con el celular de la empresa y escribe aquí su dirección. Si lo dejas vacío, el botón WhatsApp abre WhatsApp con el mensaje listo.</p>
-    <form id="wa-form" class="form">
-      <fieldset ${locked ? "disabled" : ""} class="plain-fieldset">
-      <label>Dirección de OpenWA<input name="url" value="${esc(w.url)}" placeholder="http://localhost:8002" autocomplete="off" /></label>
-      <label>Clave (api_key)${w.has_key ? " (ya guardada: déjala vacía para no cambiarla)" : ""}<input name="key" type="password" autocomplete="new-password" /></label>
-      <button class="btn primary" type="submit">Guardar WhatsApp</button>
-      <div class="inline-field"><input id="wa-test-phone" placeholder="Celular para el mensaje de prueba (opcional)" inputmode="tel" /><button class="btn" type="button" id="wa-test">Probar conexión</button></div></fieldset>
-      <p id="wa-error" class="form-error full"></p>
-    </form></div>`;
-}
-
-function bindWhatsApp() {
-  const form = $("#wa-form");
-  const body = () => { const f = Object.fromEntries(new FormData(form).entries()); return { url: f.url, ...(f.key ? { key: f.key } : {}) }; };
-  form.onsubmit = async (e) => {
-    e.preventDefault(); $("#wa-error").textContent = "";
-    try { await api("/api/settings/whatsapp", { method: "PUT", body: body() }); toast("WhatsApp guardado"); await render(); } catch (err) { $("#wa-error").textContent = err.message; alertPopup(err.message); }
-  };
-  $("#wa-test").onclick = async () => {
-    $("#wa-error").textContent = "";
-    const btn = $("#wa-test"); btn.disabled = true; btn.textContent = "Probando…";
-    try {
-      await api("/api/settings/whatsapp", { method: "PUT", body: body() });
-      const r = await api("/api/settings/whatsapp/test", { method: "POST", body: { phone: $("#wa-test-phone").value } });
-      toast(r.sent ? "Conexión correcta: se envió el mensaje de prueba" : "Conexión correcta: WhatsApp está vinculado");
-      await render();
-    } catch (err) { $("#wa-error").textContent = err.message; alertPopup(err.message); }
-    btn.disabled = false; btn.textContent = "Probar conexión";
-  };
 }
 
 /* ───────── respaldos ───────── */

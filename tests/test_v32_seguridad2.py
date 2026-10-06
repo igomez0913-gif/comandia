@@ -13,17 +13,16 @@ def test_claves_guardadas_van_cifradas_y_no_se_devuelven(client, auth):
     from app.main import Company, SessionLocal
     r = client.put("/api/settings/email", json={"host": "smtp.gmail.com", "port": 587, "user": "a@b.hn", "password": "clave-de-app-123", "from_email": "a@b.hn", "security": "starttls"}, headers=auth)
     assert r.status_code == 200 and r.json()["has_password"] is True and "clave-de-app-123" not in r.text
-    assert client.put("/api/settings/whatsapp", json={"url": "http://127.0.0.1:8002", "key": "mi-api-key"}, headers=auth).json()["has_key"] is True
     db = SessionLocal()
     c = db.query(Company).first()
-    assert c.smtp_password.startswith("enc1:") and "clave-de-app-123" not in c.smtp_password and c.wa_key.startswith("enc1:") and "mi-api-key" not in c.wa_key
-    assert main.smtp_config(c)["password"] == "clave-de-app-123" and main.wa_config(c)["key"] == "mi-api-key"  # el sistema sí las usa
+    assert c.smtp_password.startswith("enc1:") and "clave-de-app-123" not in c.smtp_password
+    assert main.smtp_config(c)["password"] == "clave-de-app-123"  # el sistema sí la usa
     # lo que ya estaba sin cifrar (versiones anteriores) se cifra al iniciar
-    c.smtp_password, c.wa_key = "vieja-en-texto", "otra-vieja"
+    c.smtp_password = "vieja-en-texto"
     db.commit()
     main.encrypt_stored_secrets(db)
     db.refresh(c)
-    assert c.smtp_password.startswith("enc1:") and main.smtp_config(c)["password"] == "vieja-en-texto" and main.wa_config(c)["key"] == "otra-vieja"
+    assert c.smtp_password.startswith("enc1:") and main.smtp_config(c)["password"] == "vieja-en-texto"
     # con otro .secret (base copiada a otro equipo) no se pueden leer: quedan vacías y piden volver a escribirlas
     assert secretos.decrypt(c.smtp_password, "otro-secreto") == "" and secretos.decrypt("sin-cifrar", "x") == "sin-cifrar"
     db.close()
