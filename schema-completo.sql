@@ -1,5 +1,5 @@
 -- Comandia 3.4.4 · Esquema COMPLETO para MySQL 8 / MariaDB 10.4+ (generado de los modelos; no lo edites a mano).
--- Crea la base, el usuario, las 31 tablas con sus llaves foráneas, únicos e índices.
+-- Crea la base, el usuario, las 34 tablas con sus llaves foráneas, únicos e índices.
 -- Úsalo en una base NUEVA y vacía (una sola vez). Comandia, al iniciar, agrega los datos iniciales (usuario administrador, empresa, catálogos).
 -- Si ya tienes una base de una versión anterior NO uses este archivo: usa actualizar-db.bat / actualizar-db.sql.
 --
@@ -239,6 +239,17 @@ CREATE TABLE IF NOT EXISTS categories (
 	FOREIGN KEY(department_id) REFERENCES departments (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- descriptives
+CREATE TABLE IF NOT EXISTS descriptives (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	name VARCHAR(80) NOT NULL, 
+	department_id INTEGER, 
+	extra_price NUMERIC(12, 2), 
+	active INTEGER, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(department_id) REFERENCES departments (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- documents
 CREATE TABLE IF NOT EXISTS documents (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -379,6 +390,8 @@ CREATE TABLE IF NOT EXISTS products (
 	price_4 NUMERIC(12, 2), 
 	min_stock NUMERIC(12, 2), 
 	tax_treatment VARCHAR(20), 
+	kind VARCHAR(12), 
+	station VARCHAR(20), 
 	PRIMARY KEY (id), 
 	UNIQUE (sku), 
 	FOREIGN KEY(department_id) REFERENCES departments (id), 
@@ -435,6 +448,24 @@ CREATE TABLE IF NOT EXISTS inventory_count_lines (
 	FOREIGN KEY(product_id) REFERENCES products (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- prep_orders
+CREATE TABLE IF NOT EXISTS prep_orders (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	number VARCHAR(16) NOT NULL, 
+	product_id INTEGER NOT NULL, 
+	warehouse_id INTEGER NOT NULL, 
+	qty NUMERIC(12, 4) NOT NULL, 
+	cost NUMERIC(12, 4), 
+	notes VARCHAR(255), 
+	created_at DATETIME, 
+	user_id INTEGER, 
+	user_name VARCHAR(120), 
+	PRIMARY KEY (id), 
+	UNIQUE (number), 
+	FOREIGN KEY(product_id) REFERENCES products (id), 
+	FOREIGN KEY(warehouse_id) REFERENCES warehouses (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- presentations
 CREATE TABLE IF NOT EXISTS presentations (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -449,6 +480,18 @@ CREATE TABLE IF NOT EXISTS presentations (
 	price_4 NUMERIC(12, 2), 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(product_id) REFERENCES products (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- recipe_lines
+CREATE TABLE IF NOT EXISTS recipe_lines (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	product_id INTEGER NOT NULL, 
+	ingredient_id INTEGER NOT NULL, 
+	qty NUMERIC(12, 4) NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_recipe_ingredient UNIQUE (product_id, ingredient_id), 
+	FOREIGN KEY(product_id) REFERENCES products (id), 
+	FOREIGN KEY(ingredient_id) REFERENCES products (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- stock_moves

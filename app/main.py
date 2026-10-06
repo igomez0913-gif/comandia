@@ -349,6 +349,8 @@ class Product(Base):
     price_4 = Column(Numeric(12, 2), default=0)
     min_stock = Column(Numeric(12, 2), default=5)
     tax_treatment = Column(String(20), default="gravado15")  # gravado15, gravado18, exento, exonerado
+    kind = Column(String(12), default="producto")  # producto (se compra y se vende), platillo (se vende; su receta descuenta insumos), insumo (ingrediente), elaborado (se produce con una orden de preparación)
+    station = Column(String(20), default="")  # estación donde se prepara (cocina, barra, parrilla...): a dónde va su comanda
     department = relationship("Department")
     category = relationship("Category")
     presentations = relationship("Presentation", cascade="all, delete-orphan")
@@ -366,6 +368,49 @@ class Presentation(Base):
     price_2 = Column(Numeric(12, 2), default=0)  # 0 = no definido: se usa el precio 1
     price_3 = Column(Numeric(12, 2), default=0)
     price_4 = Column(Numeric(12, 2), default=0)
+
+
+PRODUCT_KINDS = ("producto", "platillo", "insumo", "elaborado")
+SELLABLE_KINDS = ("producto", "platillo")  # los insumos y los elaborados no se venden
+STATIONS = ("", "cocina", "barra", "parrilla", "postres", "otra")
+
+
+class RecipeLine(Base):
+    """Un ingrediente de la receta de un platillo o elaborado. La cantidad es por UNA unidad del producto, en la unidad base del ingrediente."""
+    __tablename__ = "recipe_lines"
+    id = Column(Integer, primary_key=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    ingredient_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    qty = Column(Numeric(12, 4), nullable=False)
+    __table_args__ = (UniqueConstraint("product_id", "ingredient_id", name="uq_recipe_ingredient"),)
+    ingredient = relationship("Product", foreign_keys=[ingredient_id])
+
+
+class Descriptive(Base):
+    """Descriptivo o modificador de un pedido («sin cebolla», «término medio», «con hielo»). Sin familia = disponible para todos los platillos."""
+    __tablename__ = "descriptives"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(80), nullable=False)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)  # familia a la que aplica
+    extra_price = Column(Numeric(12, 2), default=0)  # recargo opcional («extra queso»)
+    active = Column(Integer, default=1)
+    department = relationship("Department")
+
+
+class PrepOrder(Base):
+    """Orden de preparación: produce un elaborado (salsa, masa...) gastando sus ingredientes. No se vende, pero sí queda en el inventario."""
+    __tablename__ = "prep_orders"
+    id = Column(Integer, primary_key=True)
+    number = Column(String(16), unique=True, nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
+    qty = Column(Numeric(12, 4), nullable=False)
+    cost = Column(Numeric(12, 4), default=0)  # costo total de los ingredientes gastados
+    notes = Column(String(255), default="")
+    created_at = Column(DateTime, default=now_local)
+    user_id = Column(Integer, nullable=True)
+    user_name = Column(String(120), default="")
+    product = relationship("Product")
 
 
 class Stock(Base):
@@ -732,6 +777,8 @@ class ProductIn(BaseModel):
     price_4: float = Field(default=0, ge=0)
     min_stock: float = Field(default=5, ge=0)
     tax_treatment: str = "gravado15"
+    kind: str = "producto"
+    station: str = Field(default="", max_length=20)
     presentations: list[PresentationIn] = Field(default_factory=list)
 
 
@@ -1032,6 +1079,32 @@ def adjust_stock(db: Session, product_id: int, warehouse_id: int, qty_base: floa
         raise HTTPException(400, f"Stock insuficiente de {prod.name if prod else product_id} en la bodega seleccionada")
     row.qty = Decimal(str(round(new_qty, 2)))
     db.add(StockMove(product_id=product_id, warehouse_id=warehouse_id, qty=qty_base, concept=concept, created_at=now_local()))
+
+
+def recipe_lines(db: Session, product_id: int) -> list:
+    return db.query(RecipeLine).filter(RecipeLine.product_id == product_id).order_by(RecipeLine.id).all()
+
+
+def expand_moves(db: Session, moves: list) -> list:
+    """Convierte lo vendido en lo que realmente sale del inventario: un platillo con receta gasta sus ingredientes en proporción a lo vendido;
+    lo demás se descuenta tal cual. Devuelve (producto, cantidad base, descripción) sumado por producto y ordenado: dos ventas a la vez siempre bloquean en el mismo orden."""
+    totals: dict = {}
+    for product_id, qty_base, desc in moves:
+        lines = recipe_lines(db, product_id)
+        if not lines:
+            totals[product_id] = (totals.get(product_id, (0.0, desc))[0] + qty_base, desc)
+            continue
+        for ln in lines:
+            totals[ln.ingredient_id] = (totals.get(ln.ingredient_id, (0.0, desc))[0] + qty_base * float(ln.qty), desc)
+    return [(pid, qty, desc) for pid, (qty, desc) in sorted(totals.items())]
+
+
+def effective_cost(db: Session, p: Product, _seen: tuple = ()) -> float:
+    """Costo por unidad base: si tiene receta, la suma de sus ingredientes (al costo actual de cada uno); si no, el costo guardado."""
+    lines = recipe_lines(db, p.id) if p.kind in ("platillo", "elaborado") and p.id not in _seen else []
+    if not lines:
+        return float(p.cost or 0)
+    return round(sum(float(ln.qty) * effective_cost(db, ln.ingredient, _seen + (p.id,)) for ln in lines), 4)
 
 
 LEGACY_CODE = {"factura": "01", "nota": "06"}
@@ -1535,6 +1608,8 @@ NEW_COLUMNS = [
     ("documents", "buyer_name", "VARCHAR(180) DEFAULT ''"),
     ("documents", "buyer_rtn", "VARCHAR(20) DEFAULT ''"),
     ("document_items", "cost", "DECIMAL(12,4) NULL"),
+    ("products", "kind", "VARCHAR(12) DEFAULT 'producto'"),
+    ("products", "station", "VARCHAR(20) DEFAULT ''"),
     ("purchases", "credit", "INTEGER DEFAULT 0"),
     ("purchases", "payment_terms", "VARCHAR(80) DEFAULT 'Contado'"),
     ("purchases", "due_date", "DATE NULL"),
@@ -2582,7 +2657,8 @@ def product_out(db: Session, p: Product, costs: bool = True) -> dict:
         "id": p.id, "sku": p.sku, "name": p.name,
         "department_id": p.department_id, "department": p.department.name if p.department else "",
         "category_id": p.category_id, "category": p.category.name if p.category else "",
-        "base_unit": p.base_unit, "cost": money(p.cost) if costs else None, "price": money(p.price),
+        "base_unit": p.base_unit, "cost": round(effective_cost(db, p), 2) if costs else None, "price": money(p.price),
+        "kind": p.kind or "producto", "station": p.station or "", "sellable": (p.kind or "producto") in SELLABLE_KINDS,
         "price_2": money(p.price_2 or 0), "price_3": money(p.price_3 or 0), "price_4": money(p.price_4 or 0),
         "prices": [price_for_level(p, n) for n in PRICE_LEVELS],
         "min_stock": money(p.min_stock), "tax_treatment": p.tax_treatment,
@@ -2619,6 +2695,10 @@ def _validate_product(db: Session, body: ProductIn):
     cat = db.get(Category, body.category_id)
     if not cat or cat.department_id != body.department_id:
         raise HTTPException(400, "La categoría no pertenece al departamento elegido")
+    if body.kind not in PRODUCT_KINDS:
+        raise HTTPException(400, "Tipo de producto no válido: " + ", ".join(PRODUCT_KINDS))
+    if body.station.strip().lower() not in STATIONS:
+        raise HTTPException(400, "Estación no válida: " + ", ".join(x for x in STATIONS if x))
 
 
 @app.post("/api/products")
@@ -2627,7 +2707,7 @@ def create_product(body: ProductIn, db: Session = Depends(get_db), user: User = 
     if db.query(Product).filter(func.lower(Product.sku) == sku.lower()).first():
         raise HTTPException(400, "El SKU ya existe")
     _validate_product(db, body)
-    p = Product(sku=sku, name=body.name.strip(), department_id=body.department_id, category_id=body.category_id, base_unit=body.base_unit, cost=body.cost, price=body.price, price_2=body.price_2, price_3=body.price_3, price_4=body.price_4, min_stock=body.min_stock, tax_treatment=body.tax_treatment)
+    p = Product(sku=sku, name=body.name.strip(), department_id=body.department_id, category_id=body.category_id, base_unit=body.base_unit, kind=body.kind, station=body.station.strip().lower(), cost=body.cost, price=body.price, price_2=body.price_2, price_3=body.price_3, price_4=body.price_4, min_stock=body.min_stock, tax_treatment=body.tax_treatment)
     presents = body.presentations or [PresentationIn(name=f"Unidad {body.base_unit}", unit=body.base_unit, factor=1, price=body.price,
                                                      price_2=body.price_2, price_3=body.price_3, price_4=body.price_4)]
     for item in presents:
@@ -2670,6 +2750,9 @@ def update_product(pid: int, body: ProductIn, db: Session = Depends(get_db), use
     p.sku, p.name, p.department_id, p.category_id = sku, body.name.strip(), body.department_id, body.category_id
     p.base_unit, p.cost, p.price, p.min_stock, p.tax_treatment = body.base_unit, body.cost, body.price, body.min_stock, body.tax_treatment
     p.price_2, p.price_3, p.price_4 = body.price_2, body.price_3, body.price_4
+    if body.kind != p.kind and body.kind not in ("platillo", "elaborado") and recipe_lines(db, p.id):
+        raise HTTPException(400, "Este producto tiene una receta: bórrala antes de cambiarle el tipo")
+    p.kind, p.station = body.kind, body.station.strip().lower()
     existing = {x.id: x for x in p.presentations}
     for item in body.presentations:
         if item.id is not None:
@@ -3029,7 +3112,7 @@ def make_document(db: Session, body: DocumentIn, user: Optional[User] = None, al
         items.append(DocumentItem(
             product_id=prod.id, presentation_id=pres.id if pres else None, description=desc[:200],
             unit=unit, factor=factor, qty=it.qty, price=price, discount=disc, tax_treatment=treatment, total=line,
-            cost=round(float(prod.cost or 0) * factor, 4),
+            cost=round(effective_cost(db, prod) * factor, 4),
         ))
         moves.append((prod.id, it.qty * factor, desc))
 
@@ -3079,7 +3162,7 @@ def make_document(db: Session, body: DocumentIn, user: Optional[User] = None, al
     if body.kind in {"factura", "nota"}:
         sign = -1 if body.kind == "factura" else 1
         label = "Factura" if body.kind == "factura" else "Nota de crédito"
-        for product_id, qty_base, desc in sorted(moves, key=lambda m: m[0]):  # siempre en el mismo orden: evita bloqueos cruzados entre dos ventas
+        for product_id, qty_base, desc in expand_moves(db, moves):  # recetas expandidas y siempre en el mismo orden: evita bloqueos cruzados entre dos ventas
             adjust_stock(db, product_id, body.warehouse_id, sign * qty_base, f"{label} {number}", allow_negative)
 
     due = body.due_date
@@ -3623,9 +3706,8 @@ def void_document(did: int, db: Session = Depends(get_db), user: User = Depends(
             raise HTTPException(400, "La factura tiene cobros registrados. Emite una nota de crédito en lugar de anularla.")
         if any(n.status != "Anulada" for n in d.credit_notes):
             raise HTTPException(400, "La factura tiene notas de crédito vigentes. Anula primero esas notas.")
-        for it in d.items:
-            if it.product_id:
-                adjust_stock(db, it.product_id, d.warehouse_id, float(it.qty) * float(it.factor), f"Anulación {d.number}")
+        for pid, qty_base, _desc in expand_moves(db, [(it.product_id, float(it.qty) * float(it.factor), "") for it in d.items if it.product_id]):
+            adjust_stock(db, pid, d.warehouse_id, qty_base, f"Anulación {d.number}")
         d.status = "Anulada"
     elif d.kind == "debito":  # nota de débito: no mueve inventario; la factura vuelve a deber solo lo que le corresponde
         ref = d.ref_document
@@ -3636,9 +3718,8 @@ def void_document(did: int, db: Session = Depends(get_db), user: User = Depends(
             db.flush()
             refresh_invoice_status(d.ref_document)
     else:  # nota de crédito
-        for it in d.items:
-            if it.product_id:
-                adjust_stock(db, it.product_id, d.warehouse_id, -float(it.qty) * float(it.factor), f"Anulación {d.number}")
+        for pid, qty_base, _desc in expand_moves(db, [(it.product_id, float(it.qty) * float(it.factor), "") for it in d.items if it.product_id]):
+            adjust_stock(db, pid, d.warehouse_id, -qty_base, f"Anulación {d.number}")
         d.status = "Anulada"
         if d.ref_document is not None:
             refresh_invoice_status(d.ref_document)
@@ -5536,5 +5617,7 @@ def service_worker():
     return FileResponse(os.path.join(STATIC_DIR, "sw.js"), media_type="application/javascript",
                         headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
 
+
+from app import restaurante  # noqa: E402,F401  (recetas, descriptivos y órdenes de preparación; usa lo definido arriba)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

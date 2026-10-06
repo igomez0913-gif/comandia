@@ -34,6 +34,45 @@ CREATE TABLE IF NOT EXISTS stores (
   UNIQUE (code)
 ) DEFAULT CHARSET=utf8mb4;
 
+-- Tablas nuevas del restaurante: recetas, descriptivos y órdenes de preparación
+CREATE TABLE IF NOT EXISTS recipe_lines (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  product_id INTEGER NOT NULL, 
+  ingredient_id INTEGER NOT NULL, 
+  qty NUMERIC(12, 4) NOT NULL, 
+  PRIMARY KEY (id), 
+  CONSTRAINT uq_recipe_ingredient UNIQUE (product_id, ingredient_id), 
+  FOREIGN KEY(product_id) REFERENCES products (id), 
+  FOREIGN KEY(ingredient_id) REFERENCES products (id)
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS descriptives (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  name VARCHAR(80) NOT NULL, 
+  department_id INTEGER, 
+  extra_price NUMERIC(12, 2), 
+  active INTEGER, 
+  PRIMARY KEY (id), 
+  FOREIGN KEY(department_id) REFERENCES departments (id)
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS prep_orders (
+  id INTEGER NOT NULL AUTO_INCREMENT, 
+  number VARCHAR(16) NOT NULL, 
+  product_id INTEGER NOT NULL, 
+  warehouse_id INTEGER NOT NULL, 
+  qty NUMERIC(12, 4) NOT NULL, 
+  cost NUMERIC(12, 4), 
+  notes VARCHAR(255), 
+  created_at DATETIME, 
+  user_id INTEGER, 
+  user_name VARCHAR(120), 
+  PRIMARY KEY (id), 
+  UNIQUE (number), 
+  FOREIGN KEY(product_id) REFERENCES products (id), 
+  FOREIGN KEY(warehouse_id) REFERENCES warehouses (id)
+) DEFAULT CHARSET=utf8mb4;
+
 -- Tabla nueva: contadores de numeración (OC-, CT-, CF-...), para que varios usuarios a la vez no repitan número
 CREATE TABLE IF NOT EXISTS counters (
   name VARCHAR(20) NOT NULL,
@@ -233,6 +272,8 @@ CALL comandia_add_column('purchases', 'payment_terms', 'VARCHAR(80) DEFAULT ''Co
 CALL comandia_add_column('purchases', 'due_date', 'DATE NULL');
 CALL comandia_add_column('purchases', 'supplier_invoice', 'VARCHAR(40) DEFAULT ''''');
 CALL comandia_add_column('document_items', 'cost', 'DECIMAL(12,4) NULL');
+CALL comandia_add_column('products', 'kind', 'VARCHAR(12) DEFAULT ''producto''');
+CALL comandia_add_column('products', 'station', 'VARCHAR(20) DEFAULT ''''');
 CALL comandia_add_column('documents', 'buyer_name', 'VARCHAR(180) DEFAULT ''''');
 CALL comandia_add_column('documents', 'buyer_rtn', 'VARCHAR(20) DEFAULT ''''');
 CALL comandia_add_column('cai_ranges', 'received_date', 'DATE NULL');
@@ -278,5 +319,5 @@ SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
    AND ((TABLE_NAME = 'audit_log' AND COLUMN_NAME = 'id')
         OR COLUMN_NAME IN ('ref_document_id', 'user_id', 'user_name', 'price_level', 'price_names', 'price_2', 'price_3', 'price_4',
                            'backup_enabled', 'backup_hour', 'backup_keep', 'backup_dir',
-                           'exonerated', 'exo_registry', 'sag_registry', 'oce_number', 'smtp_host', 'received_date', 'discount', 'discount_auth', 'auth_pin', 'credit_limit', 'block_overdue', 'credit_auth', 'offline_id', 'install_id'))
+                           'kind', 'station', 'exonerated', 'exo_registry', 'sag_registry', 'oce_number', 'smtp_host', 'received_date', 'discount', 'discount_auth', 'auth_pin', 'credit_limit', 'block_overdue', 'credit_auth', 'offline_id', 'install_id'))
  ORDER BY TABLE_NAME, COLUMN_NAME;
