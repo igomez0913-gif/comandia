@@ -1,5 +1,5 @@
--- Comandia 3.4.1 · Esquema COMPLETO para MySQL 8 / MariaDB 10.4+ (generado de los modelos; no lo edites a mano).
--- Crea la base, el usuario, las 33 tablas con sus llaves foráneas, únicos e índices.
+-- Comandia 3.4.4 · Esquema COMPLETO para MySQL 8 / MariaDB 10.4+ (generado de los modelos; no lo edites a mano).
+-- Crea la base, el usuario, las 31 tablas con sus llaves foráneas, únicos e índices.
 -- Úsalo en una base NUEVA y vacía (una sola vez). Comandia, al iniciar, agrega los datos iniciales (usuario administrador, empresa, catálogos).
 -- Si ya tienes una base de una versión anterior NO uses este archivo: usa actualizar-db.bat / actualizar-db.sql.
 --
@@ -407,41 +407,6 @@ CREATE TABLE IF NOT EXISTS purchase_returns (
 	FOREIGN KEY(refund_bank_id) REFERENCES banks (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- remissions
-CREATE TABLE IF NOT EXISTS remissions (
-	id INTEGER NOT NULL AUTO_INCREMENT, 
-	number VARCHAR(32) NOT NULL, 
-	status VARCHAR(12), 
-	issued_at DATETIME, 
-	transfer_date DATE, 
-	store_id INTEGER, 
-	cai_id INTEGER, 
-	cai_code VARCHAR(64), 
-	range_label VARCHAR(80), 
-	limit_date DATE, 
-	ref_document_id INTEGER, 
-	client_id INTEGER, 
-	recipient_name VARCHAR(180), 
-	recipient_rtn VARCHAR(20), 
-	reason VARCHAR(40), 
-	origin VARCHAR(255), 
-	destination VARCHAR(255), 
-	carrier_name VARCHAR(180), 
-	carrier_rtn VARCHAR(20), 
-	vehicle VARCHAR(80), 
-	plate VARCHAR(20), 
-	driver_name VARCHAR(180), 
-	driver_id VARCHAR(40), 
-	notes TEXT, 
-	user_id INTEGER, 
-	user_name VARCHAR(120), 
-	PRIMARY KEY (id), 
-	UNIQUE (number), 
-	FOREIGN KEY(cai_id) REFERENCES cai_ranges (id), 
-	FOREIGN KEY(ref_document_id) REFERENCES documents (id), 
-	FOREIGN KEY(client_id) REFERENCES clients (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- supplier_payments
 CREATE TABLE IF NOT EXISTS supplier_payments (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -486,18 +451,6 @@ CREATE TABLE IF NOT EXISTS presentations (
 	price_4 NUMERIC(12, 2), 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(product_id) REFERENCES products (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- remission_items
-CREATE TABLE IF NOT EXISTS remission_items (
-	id INTEGER NOT NULL AUTO_INCREMENT, 
-	remission_id INTEGER, 
-	product_id INTEGER, 
-	description VARCHAR(200) NOT NULL, 
-	unit VARCHAR(20), 
-	qty NUMERIC(12, 2), 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(remission_id) REFERENCES remissions (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- stock_moves

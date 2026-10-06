@@ -34,52 +34,6 @@ CREATE TABLE IF NOT EXISTS stores (
   UNIQUE (code)
 ) DEFAULT CHARSET=utf8mb4;
 
--- Tablas nuevas: guías de remisión (módulo Notas de débito y guías de remisión)
-CREATE TABLE IF NOT EXISTS remissions (
-  id INTEGER NOT NULL AUTO_INCREMENT,
-  number VARCHAR(32) NOT NULL,
-  status VARCHAR(12),
-  issued_at DATETIME,
-  transfer_date DATE,
-  store_id INTEGER,
-  cai_id INTEGER,
-  cai_code VARCHAR(64),
-  range_label VARCHAR(80),
-  limit_date DATE,
-  ref_document_id INTEGER,
-  client_id INTEGER,
-  recipient_name VARCHAR(180),
-  recipient_rtn VARCHAR(20),
-  reason VARCHAR(40),
-  origin VARCHAR(255),
-  destination VARCHAR(255),
-  carrier_name VARCHAR(180),
-  carrier_rtn VARCHAR(20),
-  vehicle VARCHAR(80),
-  plate VARCHAR(20),
-  driver_name VARCHAR(180),
-  driver_id VARCHAR(40),
-  notes TEXT,
-  user_id INTEGER,
-  user_name VARCHAR(120),
-  PRIMARY KEY (id),
-  UNIQUE (number),
-  FOREIGN KEY(cai_id) REFERENCES cai_ranges (id),
-  FOREIGN KEY(ref_document_id) REFERENCES documents (id),
-  FOREIGN KEY(client_id) REFERENCES clients (id)
-) DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS remission_items (
-  id INTEGER NOT NULL AUTO_INCREMENT,
-  remission_id INTEGER,
-  product_id INTEGER,
-  description VARCHAR(200) NOT NULL,
-  unit VARCHAR(20),
-  qty NUMERIC(12, 2),
-  PRIMARY KEY (id),
-  FOREIGN KEY(remission_id) REFERENCES remissions (id)
-) DEFAULT CHARSET=utf8mb4;
-
 -- Tabla nueva: contadores de numeración (OC-, CT-, CF-...), para que varios usuarios a la vez no repitan número
 CREATE TABLE IF NOT EXISTS counters (
   name VARCHAR(20) NOT NULL,

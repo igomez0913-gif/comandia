@@ -1,4 +1,4 @@
-/* Módulos adicionales de la v3.1: reabastecimiento y órdenes de compra, guías de remisión. */
+/* Módulos adicionales de la v3.1: reabastecimiento y órdenes de compra. */
 
 const replState = { days: 30, lead: 7, cover: 30, warehouse_id: "", onlyNeeded: true, qty: {}, sup: {}, cost: {}, picked: {} };
 const LEVEL_PILL = { agotado: ["Agotado", "vencida"], critico: ["Crítico", "vencida"], bajo: ["Bajo", "pendiente"], ok: ["Bien", "activo"] };
@@ -74,7 +74,7 @@ async function renderReplenish(root) {
   });
 }
 
-/* ───────── nota de débito (módulo Notas de débito y guías de remisión) ───────── */
+/* ───────── nota de débito (módulo Notas de débito) ───────── */
 function debitNoteForm(d) {
   openModal(`Nota de débito sobre la factura ${d.number}`, [
     { type: "info", html: `Un cargo adicional a <strong>${esc(d.client)}</strong>: intereses por mora, flete, ajuste de precio... Aumenta lo que debe esta factura (saldo actual ${money(d.balance)}) y no mueve el inventario.` },
@@ -88,115 +88,4 @@ function debitNoteForm(d) {
     toast(`${saved.kind_label} ${saved.number} emitida`);
     safePrint(printDoc, saved.id);
   });
-}
-
-/* ───────── guías de remisión ───────── */
-const REMISSION_REASONS = ["Venta", "Traslado entre bodegas o tiendas", "Devolución", "Consignación", "Otro"];
-
-async function printRemission(id) {
-  const r = await api("/api/remissions/" + id);
-  const c = r.company || {};
-  const fd = (v) => (v ? dateOnly(v) : "—");
-  const rows = r.items.map((i) => `<tr><td>${esc(i.description)}</td><td class="r">${i.qty}</td><td>${esc(i.unit)}</td></tr>`).join("");
-  await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>Guía de remisión ${esc(r.number)}</title><style>
-    @page { size: letter; margin: 12mm; } body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #111; }
-    .top { display: flex; justify-content: space-between; gap: 16px; } h1 { font-size: 20px; margin: 0; } .box { border: 1.5px solid #333; border-radius: 6px; padding: 8px 10px; }
-    .num { text-align: center; min-width: 210px; } .num b { font-size: 16px; } .muted { color: #555; } .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; } th { background: #eee; text-align: left; } th, td { border: 1px solid #888; padding: 5px 7px; } .r { text-align: right; }
-    .sig { display: flex; gap: 36px; margin-top: 56px; } .sig div { flex: 1; border-top: 1px solid #333; padding-top: 4px; text-align: center; }
-    .void { color: #b42318; font-size: 26px; font-weight: 700; border: 3px solid #b42318; display: inline-block; padding: 2px 12px; transform: rotate(-6deg); margin-top: 8px; }
-    .legend { text-align: center; font-style: italic; margin-top: 14px; font-size: 11px; }
-  </style></head><body>
-    <div class="top"><div>${c.logo ? `<img src="${esc(c.logo)}" alt="" style="max-height:60px;max-width:180px"><br>` : ""}<h1>${esc(c.name || "")}</h1><div class="muted">${esc(c.legal_name || "")}<br>RTN ${esc(c.rtn || "")}<br>${esc(c.address || "")}${c.phone ? `<br>Tel. ${esc(c.phone)}` : ""}</div></div>
-      <div class="box num"><div class="muted">GUÍA DE REMISIÓN</div><b>${esc(r.number)}</b><div class="muted" style="margin-top:6px">CAI ${esc(r.cai)}<br>Rango ${esc(r.range_label)}<br>Fecha límite de emisión ${fd(r.limit_date)}${r.cai_received ? `<br>Recepción ${fd(r.cai_received)}` : ""}</div></div></div>
-    ${r.status === "Anulada" ? `<div class="void">ANULADA</div>` : ""}
-    <div class="grid"><div class="box"><b>Remitente</b><br>${esc(c.name || "")}<br>RTN ${esc(c.rtn || "")}<br><span class="muted">Punto de partida:</span> ${esc(r.origin || "—")}</div>
-      <div class="box"><b>Destinatario</b><br>${esc(r.recipient_name)}<br>RTN ${esc(r.recipient_rtn || "—")}<br><span class="muted">Punto de llegada:</span> ${esc(r.destination)}</div></div>
-    <div class="grid"><div class="box"><b>Traslado</b><br>Motivo: ${esc(r.reason)}<br>Fecha de inicio: ${fd(r.transfer_date)}${r.ref_number ? `<br>Factura: ${esc(r.ref_number)}` : ""}</div>
-      <div class="box"><b>Transporte</b><br>${esc(r.carrier_name || "—")}${r.carrier_rtn ? ` · RTN ${esc(r.carrier_rtn)}` : ""}<br>Vehículo: ${esc(r.vehicle || "—")} · Placa ${esc(r.plate || "—")}<br>Conductor: ${esc(r.driver_name || "—")}${r.driver_id ? ` · ${esc(r.driver_id)}` : ""}</div></div>
-    <table><thead><tr><th>Descripción de la mercadería</th><th class="r">Cantidad</th><th>Unidad</th></tr></thead><tbody>${rows}</tbody></table>
-    ${r.notes ? `<p class="muted">${esc(r.notes)}</p>` : ""}
-    <div class="sig"><div>Entregó (remitente)</div><div>Transportista / conductor</div><div>Recibí conforme</div></div>
-    <div class="legend">${esc(LEGEND)}</div></body></html>`);
-}
-
-async function remissionForm() {
-  const [invoices, whs] = await Promise.all([api("/api/documents?kind=factura"), api("/api/warehouses")]);
-  const open = invoices.filter((x) => x.status !== "Anulada").slice(0, 100);
-  const lines = [{ description: "", unit: "und", qty: 1 }];
-  const html = `<label class="full">Factura que se entrega (opcional: llena los datos y la mercadería)<select name="ref_document_id"><option value="">Sin factura</option>${open.map((x) => `<option value="${x.id}">${esc(x.number)} · ${esc(x.client)} · ${money(x.total)}</option>`).join("")}</select></label>
-    ${fieldHtml({ name: "recipient_name", label: "Destinatario", required: true })}${fieldHtml({ name: "recipient_rtn", label: "RTN del destinatario" })}
-    <label>Motivo del traslado<select name="reason">${REMISSION_REASONS.map((m) => `<option>${esc(m)}</option>`).join("")}</select></label>
-    <label>Bodega de origen<select name="warehouse_id">${whs.map((w) => `<option value="${w.id}">${esc(w.name)}</option>`).join("")}</select></label>
-    ${fieldHtml({ name: "origin", label: "Punto de partida (vacío = dirección de la bodega)", full: true })}
-    ${fieldHtml({ name: "destination", label: "Punto de llegada", required: true, full: true })}
-    ${fieldHtml({ name: "transfer_date", label: "Fecha de inicio del traslado", type: "date", value: new Date().toISOString().slice(0, 10) })}
-    ${fieldHtml({ name: "carrier_name", label: "Transportista" })}${fieldHtml({ name: "carrier_rtn", label: "RTN del transportista" })}
-    ${fieldHtml({ name: "vehicle", label: "Vehículo" })}${fieldHtml({ name: "plate", label: "Placa" })}
-    ${fieldHtml({ name: "driver_name", label: "Conductor" })}${fieldHtml({ name: "driver_id", label: "Identidad o licencia del conductor" })}
-    <div class="full"><h4>Mercadería</h4><div id="rm-lines"></div><button type="button" class="btn sm" id="rm-add">+ Agregar línea</button></div>
-    ${fieldHtml({ name: "notes", label: "Notas", type: "textarea", full: true })}`;
-  openForm("Nueva guía de remisión", html, async (form) => {
-    const f = Object.fromEntries(new FormData(form).entries());
-    const items = lines.filter((l) => l.description.trim()).map((l) => ({ description: l.description.trim(), unit: l.unit || "und", qty: num(l.qty) || 1 }));
-    if (!items.length) throw new Error("Agrega al menos una línea de mercadería");
-    const saved = await api("/api/remissions", { method: "POST", body: { ...f, ref_document_id: f.ref_document_id ? +f.ref_document_id : null, warehouse_id: +f.warehouse_id, transfer_date: f.transfer_date || null, items } });
-    toast(`Guía ${saved.number} emitida`);
-    safePrint(printRemission, saved.id);
-  }, { wide: true, submitLabel: "Emitir e imprimir guía", mount: (form) => {
-    const paint = () => {
-      $("#rm-lines", form).innerHTML = lines.map((l, i) => `<div class="line-row" style="display:grid;grid-template-columns:1fr 90px 90px 32px;gap:6px;margin-bottom:6px">
-        <input data-l="${i}" data-k="description" placeholder="Descripción" value="${esc(l.description)}" /><input data-l="${i}" data-k="qty" type="number" min="0.01" step="0.01" value="${l.qty}" aria-label="Cantidad" />
-        <input data-l="${i}" data-k="unit" value="${esc(l.unit)}" aria-label="Unidad" /><button type="button" class="btn ghost sm" data-rm="${i}" aria-label="Quitar">✕</button></div>`).join("");
-      $$("[data-l]", form).forEach((el) => el.oninput = () => { lines[+el.dataset.l][el.dataset.k] = el.value; });
-      $$("[data-rm]", form).forEach((el) => el.onclick = () => { if (lines.length > 1) { lines.splice(+el.dataset.rm, 1); paint(); } });
-    };
-    paint();
-    $("#rm-add", form).onclick = () => { lines.push({ description: "", unit: "und", qty: 1 }); paint(); };
-    $("[name=ref_document_id]", form).onchange = async (e) => {
-      if (!e.target.value) return;
-      const { document: d } = await api("/api/documents/" + e.target.value);
-      $("[name=recipient_name]", form).value = d.client; $("[name=recipient_rtn]", form).value = d.rtn || ""; $("[name=destination]", form).value = d.client_address || $("[name=destination]", form).value;
-      lines.splice(0, lines.length, ...d.items.map((i) => ({ description: i.description, unit: i.unit, qty: i.qty })));
-      paint();
-    };
-  } });
-}
-
-async function renderRemissions(root) {
-  let rows;
-  try { rows = await api("/api/remissions"); }
-  catch (err) { root.innerHTML = `<div class="section-head"><h2>Guías de remisión</h2></div><div class="card"><p class="muted">${esc(err.message)}</p></div>`; return; }
-  root.innerHTML = `<div class="section-head"><h2>Guías de remisión</h2><div class="actions"><button class="btn primary" id="rm-new">Nueva guía de remisión</button></div></div>
-    <p class="muted">Documento que acompaña la mercadería durante el traslado (ventas con entrega, traslados entre bodegas o tiendas). Usa su propio CAI y numeración: cárgalo en Configuración › CAI con el documento «Guía de remisión». No mueve el inventario.</p>
-    <div class="card">${table(["GUÍA", "FECHA", "DESTINATARIO", "DESTINO", "MOTIVO", "FACTURA", "ESTADO", ""], rows.map((r) => `<tr><td class="nowrap">${esc(r.number)}</td><td class="nowrap">${when(r.issued_at)}</td><td>${esc(r.recipient_name)}</td><td>${esc(r.destination)}</td>
-      <td>${esc(r.reason)}</td><td>${esc(r.ref_number || "—")}</td><td>${pill(r.status === "Emitida" ? "Activo" : "Anulada")}</td>
-      <td class="row-actions"><button class="btn sm" data-rprint="${r.id}">Imprimir</button>${can("anular") && r.status === "Emitida" ? `<button class="btn danger sm" data-rvoid="${r.id}">Anular</button>` : ""}</td></tr>`), "Aún no hay guías de remisión")}</div>`;
-  $("#rm-new").onclick = () => remissionForm();
-  $$("[data-rprint]").forEach((b) => b.onclick = () => safePrint(printRemission, +b.dataset.rprint));
-  $$("[data-rvoid]").forEach((b) => b.onclick = async () => { if (await askConfirm("¿Anular esta guía? El número queda registrado como anulado.", "Anular", true)) run(() => api(`/api/remissions/${b.dataset.rvoid}/void`, { method: "POST" }), "Guía anulada"); });
-}
-
-
-/* ───────── libro de ventas diario: impresión (carta horizontal) ───────── */
-async function printDailyBook(book) {
-  const e = book.empresa, t = book.totales, n = (v) => money(v);
-  const rows = book.dias.map((r) => `<tr><td>${esc(r.fecha)}</td><td>${esc(r.tipo)}</td><td>${esc(r.serie)}</td><td class="m">${esc(r.desde)}</td><td class="m">${esc(r.hasta)}</td><td class="r">${r.documentos}</td>
-    <td class="r">${r.anuladas.length || "—"}</td><td class="r">${n(r.exento)}</td><td class="r">${n(r.exonerado)}</td><td class="r">${n(r.gravado_15)}</td><td class="r">${n(r.isv_15)}</td><td class="r">${n(r.gravado_18)}</td><td class="r">${n(r.isv_18)}</td><td class="r">${n(r.descuento)}</td><td class="r"><b>${n(r.total)}</b></td></tr>
-    ${r.anuladas.length ? `<tr class="sub"><td></td><td colspan="14">Anuladas: ${esc(r.anuladas.join(", "))}</td></tr>` : ""}${r.saltos_total ? `<tr class="sub warn"><td></td><td colspan="14">Faltan en la secuencia: ${esc(r.saltos.join(", "))}${r.saltos_total > r.saltos.length ? "…" : ""}</td></tr>` : ""}`).join("");
-  const tot = (label, x, strong) => `<tr class="${strong ? "grand" : "tot"}"><td colspan="5">${label}</td><td class="r">${x.documentos}</td><td class="r">${x.anuladas}</td><td class="r">${n(x.exento)}</td><td class="r">${n(x.exonerado)}</td><td class="r">${n(x.gravado_15)}</td><td class="r">${n(x.isv_15)}</td><td class="r">${n(x.gravado_18)}</td><td class="r">${n(x.isv_18)}</td><td class="r">${n(x.descuento)}</td><td class="r">${n(x.total)}</td></tr>`;
-  await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>Libro de ventas ${esc(book.desde)} al ${esc(book.hasta)}</title><style>
-    @page { size: letter landscape; margin: 10mm; } body { font-family: Arial, Helvetica, sans-serif; font-size: 9.5px; color: #111; }
-    h1 { font-size: 15px; margin: 0; } h2 { font-size: 12px; margin: 2px 0 6px; } .muted { color: #444; } table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-    th { background: #e8efe9; text-align: center; font-size: 8.5px; } th, td { border: 1px solid #888; padding: 2px 4px; } .r { text-align: right; white-space: nowrap; } .m { font-family: monospace; white-space: nowrap; }
-    tr.sub td { border-top: 0; font-size: 8.5px; color: #333; } tr.warn td { color: #b42318; font-weight: 700; } tr.tot td { background: #f3f3f3; font-weight: 700; } tr.grand td { background: #dfeadf; font-weight: 800; font-size: 10.5px; }
-    thead { display: table-header-group; } tr { page-break-inside: avoid; } .sig { display: flex; gap: 60px; margin-top: 36px; } .sig div { flex: 1; border-top: 1px solid #333; padding-top: 3px; text-align: center; }
-  </style></head><body>
-    <h1>${esc(e.nombre)}</h1><div class="muted">${esc(e.razon_social || "")} · RTN ${esc(e.rtn || "")} · ${esc(e.direccion || "")}</div>
-    <h2>LIBRO DE VENTAS · RESUMEN DIARIO — del ${dateOnly(book.desde)} al ${dateOnly(book.hasta)} · Serie: ${esc(book.serie)}</h2>
-    ${book.cai.map((c) => `<div class="muted">CAI ${esc(c.cai)} · ${esc(c.documento)} · rango autorizado ${esc(c.rango)} · fecha límite de emisión ${c.limite ? dateOnly(c.limite) : "—"}</div>`).join("")}
-    <table><thead><tr><th>Fecha</th><th>Documento</th><th>Serie</th><th>Número inicial</th><th>Número final</th><th>Docs.</th><th>Anul.</th><th>Importe exento</th><th>Importe exonerado</th><th>Gravado 15%</th><th>ISV 15%</th><th>Gravado 18%</th><th>ISV 18%</th><th>Descuentos y rebajas</th><th>Total</th></tr></thead>
-    <tbody>${rows}${tot("TOTAL FACTURAS", t.facturas)}${tot("TOTAL NOTAS DE DÉBITO", t.debitos)}${tot("TOTAL NOTAS DE CRÉDITO", t.creditos)}${tot("VENTAS NETAS", t.netas, true)}</tbody></table>
-    <p class="muted">Importes en lempiras. Las notas de crédito restan; los documentos anulados se cuentan en la secuencia pero no suman importes.</p>
-    <div class="sig"><div>Elaborado por</div><div>Revisado por</div><div>Contador / Representante legal</div></div></body></html>`);
 }

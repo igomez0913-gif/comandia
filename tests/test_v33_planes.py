@@ -86,7 +86,7 @@ def test_basico_lo_esencial_funciona_y_lo_adicional_se_bloquea(client, auth, key
               client.put("/api/backups/settings", json={"enabled": True, "hour": 12, "keep": 5, "folder": "", "copy_folder": ""}, headers=auth),
               client.put("/api/settings/email", json={"host": "h", "port": 587}, headers=auth), client.post("/api/settings/email/test", json={"to": "a@b.hn"}, headers=auth),
               client.put("/api/settings/whatsapp", json={"url": "http://127.0.0.1:8002"}, headers=auth), client.get("/api/labels/products", headers=auth),
-              client.get("/api/replenishment", headers=auth), client.get("/api/remissions", headers=auth), client.post("/api/api-keys", json={"name": "ERP"}, headers=auth),
+              client.get("/api/replenishment", headers=auth), client.post("/api/api-keys", json={"name": "ERP"}, headers=auth),
               client.get("/api/payables", headers=auth), client.get("/api/reports/cxp.csv", headers=auth),
               client.post("/api/purchases", json=purchase_body(client, auth, status="Pendiente"), headers=auth),
               client.post("/api/purchases", json=purchase_body(client, auth, status="Recibida", payment_terms="30 días"), headers=auth)):
@@ -122,7 +122,7 @@ def test_profesional_abre_lo_suyo_y_deja_cerrado_lo_empresarial(client, auth, ke
     assert client.post("/api/warehouses", json={"code": "X1", "name": "Otra", "address": ""}, headers=auth).status_code == 200
     assert client.post("/api/api-keys", json={"name": "ERP"}, headers=auth).status_code == 200
     for r in (client.put("/api/settings/email", json={"host": "h", "port": 587}, headers=auth), client.put("/api/settings/whatsapp", json={"url": "http://127.0.0.1:8002"}, headers=auth),
-              client.get("/api/payables", headers=auth), client.get("/api/replenishment", headers=auth), client.get("/api/remissions", headers=auth),
+              client.get("/api/payables", headers=auth), client.get("/api/replenishment", headers=auth),
               client.post("/api/purchases", json=purchase_body(client, auth, status="Pendiente"), headers=auth)):
         assert blocked(r), r.request.url
 

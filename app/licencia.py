@@ -50,7 +50,7 @@ MODULE_LABELS = {
     "reports": "Reportes avanzados: rentabilidad y ventas por rango de fechas",
     "advanced_credit": "Gestión avanzada de crédito y cobranza",
     "reabastecimiento": "Reabastecimiento sugerido y órdenes de compra",
-    "docs_fiscales": "Notas de débito y guías de remisión",
+    "docs_fiscales": "Notas de débito",
     "etiquetas": "Etiquetas y códigos de barras",
     "backup": "Respaldos automáticos programados y copia secundaria",
     "api": "API REST para integraciones (llaves de acceso de lectura)",
@@ -60,7 +60,7 @@ MODULE_LABELS = {
 MODULE_NAMES = {  # nombre corto, para los avisos
     "whatsapp": "WhatsApp", "multi_warehouse": "Multi-bodega", "multi_tienda": "Multi-tienda", "offline": "Modo sin conexión", "importar_excel": "Importar desde Excel",
     "turnos_caja": "Turnos de caja", "reports": "Reportes avanzados", "advanced_credit": "Crédito avanzado", "reabastecimiento": "Reabastecimiento",
-    "docs_fiscales": "Notas de débito y guías de remisión", "etiquetas": "Etiquetas y códigos de barras", "backup": "Respaldos automáticos", "api": "API REST",
+    "docs_fiscales": "Notas de débito", "etiquetas": "Etiquetas y códigos de barras", "backup": "Respaldos automáticos", "api": "API REST",
     "email": "Correo electrónico", "compras": "Compras",
 }
 # Módulos con candado. Los demás vienen incluidos en toda instalación (turnos y cierre de caja, facturación, inventario, clientes,

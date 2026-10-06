@@ -18,11 +18,11 @@ setInterval(() => {
 let LIC_ACTIVE = {}; // módulos activos según la licencia (se guarda en el equipo para el modo sin conexión)
 const modOn = (name) => LIC_ACTIVE[name] !== false;
 const MOD_LOCKED = { whatsapp: "WhatsApp", multi_warehouse: "Multi-bodega", multi_tienda: "Multi-tienda", offline: "Modo sin conexión", importar_excel: "Importar desde Excel", reports: "Reportes avanzados",
-  advanced_credit: "Crédito avanzado", reabastecimiento: "Reabastecimiento", docs_fiscales: "Notas de débito y guías de remisión", etiquetas: "Etiquetas y códigos de barras", backup: "Respaldos automáticos",
+  advanced_credit: "Crédito avanzado", reabastecimiento: "Reabastecimiento", docs_fiscales: "Notas de débito", etiquetas: "Etiquetas y códigos de barras", backup: "Respaldos automáticos",
   api: "API REST", email: "Correo electrónico", compras: "Compras" };
 const lockedPopup = (name) => alertPopup(`El módulo «${MOD_LOCKED[name] || name}» no está activado. Pide tu clave y actívala en Configuración › Licencia.`, "Módulo adicional");
 let PLAN = { id: "todo", label: "" }; // paquete de la licencia (Básico, Profesional, Empresarial, Todo) para la barra superior
-const NAV_MODULE = { reabastecer: "reabastecimiento", etiquetas: "etiquetas", remisiones: "docs_fiscales", cxp: "compras" }; // pantallas que son de un módulo
+const NAV_MODULE = { reabastecer: "reabastecimiento", etiquetas: "etiquetas", cxp: "compras" }; // pantallas que son de un módulo
 function applyPlanUi() {
   $$("[data-view]").forEach((b) => { const m = NAV_MODULE[b.dataset.view]; if (!m) return; b.classList.toggle("locked", !modOn(m)); b.title = modOn(m) ? "" : `Módulo «${MOD_LOCKED[m]}»: sin activar`; });
   const badge = $("#plan-badge");
@@ -42,7 +42,7 @@ const slug = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toL
 const seriesLabel = (s) => `${s.code === s.name ? s.name : `${s.code} · ${s.name}`} · siguiente ${s.current}`;
 const pill = (s) => `<span class="pill ${slug(s)}">${esc(s)}</span>`;
 const can = (...perms) => !!user && perms.some((p) => (user.permissions || []).includes(p));
-const NAV_PERMS = { bodegas: ["inventario", "catalogo"], catalogo: ["catalogo"], proveedores: ["compras"], bancos: ["bancos"], reportes: ["reportes"], config: ["config", "usuarios"], cxc: ["cobrar", "reportes"], caja: ["cobrar", "reportes"], bitacora: ["bitacora"], cxp: ["compras", "bancos"], conteo: ["inventario"], reabastecer: ["compras"], etiquetas: ["catalogo", "inventario"], remisiones: ["facturar", "inventario"] };
+const NAV_PERMS = { bodegas: ["inventario", "catalogo"], catalogo: ["catalogo"], proveedores: ["compras"], bancos: ["bancos"], reportes: ["reportes"], config: ["config", "usuarios"], cxc: ["cobrar", "reportes"], caja: ["cobrar", "reportes"], bitacora: ["bitacora"], cxp: ["compras", "bancos"], conteo: ["inventario"], reabastecer: ["compras"], etiquetas: ["catalogo", "inventario"], };
 // Vistas que piden TODOS sus permisos (no solo uno): el punto de venta factura y cobra a la vez.
 const NAV_ALL = { pos: ["facturar", "cobrar"] };
 const canAll = (...perms) => perms.every((p) => can(p));
@@ -597,7 +597,7 @@ async function render() {
     const views = {
       inicio: renderHome, ventas: (r) => renderDocs(r, ""), cxc: (r) => renderDocs(r, "cxc"), inventario: (r) => renderProducts(r, q),
       bodegas: renderWarehouses, catalogo: renderCatalog, clientes: (r) => renderClients(r, q), proveedores: renderSuppliers,
-      bancos: renderBanks, reportes: renderReports, config: renderSettings, caja: renderCashClose, bitacora: renderAudit, pos: renderPos, cxp: renderPayables, conteo: renderCounts, etiquetas: renderLabels, reabastecer: renderReplenish, remisiones: renderRemissions,
+      bancos: renderBanks, reportes: renderReports, config: renderSettings, caja: renderCashClose, bitacora: renderAudit, pos: renderPos, cxp: renderPayables, conteo: renderCounts, etiquetas: renderLabels, reabastecer: renderReplenish,
     };
     await (views[view] || renderHome)(root);
   } catch (err) { root.innerHTML = `<div class="card"><p>${esc(err.message)}</p></div>`; }

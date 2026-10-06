@@ -100,43 +100,17 @@ def test_nota_de_debito_aumenta_lo_que_debe_la_factura(client, auth):
     assert client.post(f"/api/documents/{inv['id']}/void", headers=auth).status_code == 400
 
 
-def test_guia_de_remision_con_su_propio_cai_sin_mover_inventario(client, auth):
-    p = product(client, auth, "CEM-050")
-    i = ids(client, auth)
-    inv = invoice(client, auth, [line(p, 2)]).json()
-    body = {"ref_document_id": inv["id"], "recipient_name": "Constructora Los Pinos", "recipient_rtn": "0801-9999-123456", "reason": "Venta", "destination": "Col. Kennedy, Tegucigalpa",
-            "carrier_name": "Transportes Gómez", "vehicle": "Camión 3 t", "plate": "hba1234", "driver_name": "Juan Pérez", "driver_id": "0801-1980-01234",
-            "warehouse_id": i["wh"]["id"], "items": [{"description": "Cemento gris 42.5 kg", "unit": "saco", "qty": 2}]}
-    no_cai = client.post("/api/remissions", json=body, headers=auth)
-    assert no_cai.status_code == 400 and "guía de remisión" in no_cai.json()["detail"].lower()
-    add_cai_for(client, auth, "guia", "05")
-    before = next(s["qty"] for s in product(client, auth, "CEM-050")["stocks"] if s["warehouse_id"] == i["wh"]["id"])
-    r = client.post("/api/remissions", json=body, headers=auth)
-    assert r.status_code == 200, r.text
-    g = r.json()
-    assert g["number"] == "001-001-05-00000001" and g["plate"] == "HBA1234" and g["ref_number"] == inv["number"] and g["items"][0]["qty"] == 2 and g["cai"]
-    assert next(s["qty"] for s in product(client, auth, "CEM-050")["stocks"] if s["warehouse_id"] == i["wh"]["id"]) == before
-    assert client.post("/api/remissions", json={**body, "reason": "Inventado"}, headers=auth).status_code == 400
-    assert client.post("/api/remissions", json={**body, "items": []}, headers=auth).status_code == 422
-    nxt = client.post("/api/remissions", json=body, headers=auth).json()
-    assert nxt["number"].endswith("00000002")  # correlativo propio, no usa el de las facturas
-    assert client.post(f"/api/remissions/{g['id']}/void", headers=auth).json()["status"] == "Anulada"
-    assert client.post(f"/api/remissions/{g['id']}/void", headers=auth).status_code == 400
-    assert len(client.get("/api/remissions", headers=auth).json()) == 2  # la anulada sigue en la lista (secuencia fiscal)
-
-
 def test_docs_fiscales_con_candado(client, auth, keys):
     p = product(client, auth, "CEM-050")
     inv = invoice(client, auth, [line(p, 1)]).json()
     end_trial(client)
     body_nd = {"kind": "debito", "client_id": inv["client_id"], "warehouse_id": inv["warehouse_id"], "ref_document_id": inv["id"], "items": [{"description": "Flete", "qty": 1, "price": 50}]}
-    for r in (client.post("/api/documents", json=body_nd, headers=auth), client.get("/api/remissions", headers=auth),
-              client.post("/api/cai", json={"cai": "D4E5F6-A7B8C9-001122-DDEEFF-AA0044", "doc_type": "05", "purpose": "guia", "limit_date": (date.today() + timedelta(days=90)).isoformat()}, headers=auth)):
+    for r in (client.post("/api/documents", json=body_nd, headers=auth), client.post("/api/cai", json={"cai": "D4E5F6-A7B8C9-001122-DDEEFF-AA0044", "doc_type": "04", "purpose": "debito", "limit_date": (date.today() + timedelta(days=90)).isoformat()}, headers=auth)):
         assert r.status_code == 403 and "no está activado" in r.json()["detail"]
     assert invoice(client, auth, [line(p, 1)]).status_code == 200  # facturar y las notas de crédito siguen funcionando
     key = issue(keys, install_id(client, auth), modules=("docs_fiscales",))
     assert client.post("/api/license", json={"key": key}, headers=auth).status_code == 200
-    assert client.get("/api/remissions", headers=auth).status_code == 200
+    assert client.post("/api/documents", json=body_nd, headers=auth).status_code != 403  # ya no está bloqueada por la licencia
 
 
 def test_ventas_por_rango_de_fechas(client, auth, login):

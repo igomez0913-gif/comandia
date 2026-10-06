@@ -397,7 +397,7 @@ class CaiRange(Base):
     id = Column(Integer, primary_key=True)
     cai = Column(String(64), nullable=False)
     doc_type = Column(String(2), default="01")  # código de 2 dígitos del número fiscal (01 factura, 06 nota de crédito; los demás según la autorización)
-    purpose = Column(String(10), default="")  # para qué documento es: factura, nota, debito, guia (vacío = se deduce del código 01 / 06)
+    purpose = Column(String(10), default="")  # para qué documento es: factura, nota, debito (vacío = se deduce del código 01 / 06)
     establishment = Column(String(3), default="001")
     emission_point = Column(String(3), default="001")
     range_from = Column(Integer, default=1)
@@ -490,50 +490,6 @@ class DocumentItem(Base):
     tax_treatment = Column(String(20), default="gravado15")
     total = Column(Numeric(12, 2), default=0)
     cost = Column(Numeric(12, 4), nullable=True)  # costo unitario (por presentación) al momento de vender; vacío en ventas viejas
-
-
-class Remission(Base):
-    """Guía de remisión: acompaña la mercadería que se traslada. Lleva su propio CAI y número, no mueve inventario ni tiene montos."""
-    __tablename__ = "remissions"
-    id = Column(Integer, primary_key=True)
-    number = Column(String(32), unique=True, nullable=False)
-    status = Column(String(12), default="Emitida")  # Emitida o Anulada
-    issued_at = Column(DateTime, default=now_local)
-    transfer_date = Column(Date, nullable=True)  # fecha de inicio del traslado
-    store_id = Column(Integer, nullable=True)
-    cai_id = Column(Integer, ForeignKey("cai_ranges.id"), nullable=True)
-    cai_code = Column(String(64), default="")
-    range_label = Column(String(80), default="")
-    limit_date = Column(Date, nullable=True)
-    ref_document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)  # factura que se entrega, si la hay
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    recipient_name = Column(String(180), default="")
-    recipient_rtn = Column(String(20), default="")
-    reason = Column(String(40), default="Venta")
-    origin = Column(String(255), default="")
-    destination = Column(String(255), default="")
-    carrier_name = Column(String(180), default="")  # transportista
-    carrier_rtn = Column(String(20), default="")
-    vehicle = Column(String(80), default="")
-    plate = Column(String(20), default="")
-    driver_name = Column(String(180), default="")
-    driver_id = Column(String(40), default="")  # identidad o licencia
-    notes = Column(Text, default="")
-    user_id = Column(Integer, nullable=True)
-    user_name = Column(String(120), default="")
-    items = relationship("RemissionItem", cascade="all, delete-orphan", order_by="RemissionItem.id")
-    ref_document = relationship("Document")
-    cai_range = relationship("CaiRange")
-
-
-class RemissionItem(Base):
-    __tablename__ = "remission_items"
-    id = Column(Integer, primary_key=True)
-    remission_id = Column(Integer, ForeignKey("remissions.id"))
-    product_id = Column(Integer, nullable=True)
-    description = Column(String(200), nullable=False)
-    unit = Column(String(20), default="und")
-    qty = Column(Numeric(12, 2), default=1)
 
 
 class Payment(Base):
@@ -946,7 +902,7 @@ class AdjustIn(BaseModel):
 class CaiIn(BaseModel):
     cai: str = Field(min_length=10)
     doc_type: str = "01"
-    purpose: str = ""  # factura, nota, debito o guia (vacío = según doc_type)
+    purpose: str = ""  # factura, nota o debito (vacío = según doc_type)
     establishment: str = "001"
     emission_point: str = "001"
     range_from: int = Field(default=1, ge=1)
@@ -1088,8 +1044,8 @@ def adjust_stock(db: Session, product_id: int, warehouse_id: int, qty_base: floa
 
 
 LEGACY_CODE = {"factura": "01", "nota": "06"}
-CAI_PURPOSES = {"factura": "Factura", "nota": "Nota de crédito", "debito": "Nota de débito", "guia": "Guía de remisión"}
-DEFAULT_CODE = {"factura": "01", "nota": "06", "debito": "04", "guia": "05"}  # el código real es el de la autorización del SAR: se puede cambiar al registrar el CAI
+CAI_PURPOSES = {"factura": "Factura", "nota": "Nota de crédito", "debito": "Nota de débito"}
+DEFAULT_CODE = {"factura": "01", "nota": "06", "debito": "04"}  # el código real es el de la autorización del SAR: se puede cambiar al registrar el CAI
 
 
 def cai_purpose(cai: CaiRange) -> str:
@@ -1106,7 +1062,7 @@ def fiscal_number(cai: CaiRange) -> str:
 
 
 def take_fiscal_number(db: Session, doc_type: str, series_id: Optional[int] = None, establishment: Optional[str] = None):
-    doc_type = {"01": "factura", "06": "nota"}.get(doc_type, doc_type)  # «doc_type» es el propósito: factura, nota, debito o guia
+    doc_type = {"01": "factura", "06": "nota"}.get(doc_type, doc_type)  # «doc_type» es el propósito: factura, nota o debito
     """Reserva el siguiente correlativo fiscal. Devuelve (cai, número, serie, rango).
 
     - Serie normal (sin letra): usa el correlativo del CAI.
@@ -3975,7 +3931,7 @@ def create_cai(body: CaiIn, db: Session = Depends(get_db), user: User = Depends(
     code = code or DEFAULT_CODE.get(purpose, "")  # sin código escrito se usa el sugerido para ese documento
     if purpose not in CAI_PURPOSES or not re.fullmatch(r"\d{2}", code):
         raise HTTPException(400, "Tipo de documento no válido: elige factura, nota de crédito, nota de débito o guía de remisión, con su código de 2 dígitos")
-    if purpose in ("debito", "guia"):
+    if purpose == "debito":
         ensure_module(db, "docs_fiscales")
     if not (re.fullmatch(r"\d{3}", body.establishment) and re.fullmatch(r"\d{3}", body.emission_point)):
         raise HTTPException(400, "Establecimiento y punto de emisión deben tener 3 dígitos")
@@ -4236,120 +4192,6 @@ def v1_document(did: int, db: Session = Depends(get_db), key: ApiKey = Depends(a
     if not d:
         raise HTTPException(404, "Documento no encontrado")
     return _v1_document(d, detail=True)
-
-
-# ───────────────────────── Guías de remisión (módulo adicional) ─────────────────────────
-REMISSION_REASONS = ["Venta", "Traslado entre bodegas o tiendas", "Devolución", "Consignación", "Otro"]
-
-
-class RemissionItemIn(BaseModel):
-    product_id: Optional[int] = None
-    description: str = Field(min_length=1, max_length=200)
-    unit: str = Field(default="und", max_length=20)
-    qty: float = Field(default=1, gt=0, le=1_000_000)
-
-
-class RemissionIn(BaseModel):
-    ref_document_id: Optional[int] = None
-    client_id: Optional[int] = None
-    recipient_name: str = Field(min_length=1, max_length=180)
-    recipient_rtn: str = Field(default="", max_length=20)
-    reason: str = "Venta"
-    origin: str = Field(default="", max_length=255)
-    destination: str = Field(min_length=1, max_length=255)
-    transfer_date: Optional[date] = None
-    carrier_name: str = Field(default="", max_length=180)
-    carrier_rtn: str = Field(default="", max_length=20)
-    vehicle: str = Field(default="", max_length=80)
-    plate: str = Field(default="", max_length=20)
-    driver_name: str = Field(default="", max_length=180)
-    driver_id: str = Field(default="", max_length=40)
-    notes: str = Field(default="", max_length=500)
-    warehouse_id: Optional[int] = None  # bodega de origen (define la tienda y su CAI)
-    items: list[RemissionItemIn] = Field(min_length=1)
-
-
-def remission_out(db: Session, r: Remission, detail: bool = True) -> dict:
-    c = db.query(Company).first() or Company()
-    out = {"id": r.id, "number": r.number, "status": r.status, "issued_at": r.issued_at.isoformat() if r.issued_at else None,
-           "transfer_date": r.transfer_date.isoformat() if r.transfer_date else None, "recipient_name": r.recipient_name, "recipient_rtn": r.recipient_rtn,
-           "reason": r.reason, "destination": r.destination, "ref_number": r.ref_document.number if r.ref_document else "", "user": r.user_name or "",
-           "lines": len(r.items)}
-    if detail:
-        out.update({"origin": r.origin, "carrier_name": r.carrier_name, "carrier_rtn": r.carrier_rtn, "vehicle": r.vehicle, "plate": r.plate,
-                    "driver_name": r.driver_name, "driver_id": r.driver_id, "notes": r.notes or "", "cai": r.cai_code or "", "range_label": r.range_label or "",
-                    "limit_date": r.limit_date.isoformat() if r.limit_date else None, "ref_document_id": r.ref_document_id, "client_id": r.client_id,
-                    "cai_received": r.cai_range.received_date.isoformat() if r.cai_range and r.cai_range.received_date else None,
-                    "items": [{"description": i.description, "unit": i.unit, "qty": money(i.qty)} for i in r.items],
-                    "company": {"name": c.name, "legal_name": c.legal_name, "rtn": c.rtn, "address": c.address, "phone": c.phone, "logo": c.logo_path or ""}})
-    return out
-
-
-@app.get("/api/remissions")
-def list_remissions(db: Session = Depends(get_db), user: User = Depends(require("facturar", "inventario"))):
-    ensure_module(db, "docs_fiscales")
-    q = db.query(Remission).order_by(Remission.issued_at.desc(), Remission.id.desc())
-    scope = store_scope(db, user)
-    if scope:
-        main = default_store(db).id
-        q = q.filter(or_(Remission.store_id == scope, Remission.store_id.is_(None)) if scope == main else Remission.store_id == scope)
-    return [remission_out(db, r, detail=False) for r in q.limit(500).all()]
-
-
-@app.get("/api/remissions/{rid}")
-def get_remission(rid: int, db: Session = Depends(get_db), user: User = Depends(require("facturar", "inventario"))):
-    ensure_module(db, "docs_fiscales")
-    r = db.get(Remission, rid)
-    if not r:
-        raise HTTPException(404, "Guía de remisión no encontrada")
-    return remission_out(db, r)
-
-
-@app.post("/api/remissions")
-def create_remission(body: RemissionIn, db: Session = Depends(get_db), user: User = Depends(require("facturar", "inventario"))):
-    """Emite una guía de remisión con el siguiente número de su CAI. No toca el inventario: la factura (o el traslado) ya lo movió."""
-    ensure_module(db, "docs_fiscales")
-    if body.reason not in REMISSION_REASONS:
-        raise HTTPException(400, "Motivo del traslado no válido")
-    ref = db.get(Document, body.ref_document_id) if body.ref_document_id else None
-    if body.ref_document_id and (not ref or ref.kind != "factura"):
-        raise HTTPException(400, "La factura indicada no existe")
-    if ref is not None and ref.status == "Anulada":
-        raise HTTPException(400, f"La factura {ref.number} está anulada")
-    warehouse = db.get(Warehouse, body.warehouse_id or (ref.warehouse_id if ref else 0)) if (body.warehouse_id or ref) else None
-    store = store_of(db, warehouse) if warehouse else (db.get(Store, user.store_id) if user.store_id else default_store(db))
-    scope = store_scope(db, user)
-    if scope is not None and store.id != scope:
-        raise HTTPException(403, "Tu usuario solo puede emitir guías de su tienda")
-    cai, number, _series, label = take_fiscal_number(db, "guia", None, store.code if multi_store(db) else None)
-    origin = body.origin.strip() or (warehouse.address if warehouse and warehouse.address else store.address or "")
-    r = Remission(
-        number=number, status="Emitida", issued_at=now_local(), transfer_date=body.transfer_date or today_local(), store_id=store.id, cai_id=cai.id, cai_code=cai.cai,
-        range_label=label, limit_date=cai.limit_date, ref_document_id=ref.id if ref else None, client_id=body.client_id or (ref.client_id if ref else None),
-        recipient_name=body.recipient_name.strip(), recipient_rtn=clean_rtn(body.recipient_rtn), reason=body.reason, origin=origin, destination=body.destination.strip(),
-        carrier_name=body.carrier_name.strip(), carrier_rtn=clean_rtn(body.carrier_rtn), vehicle=body.vehicle.strip(), plate=body.plate.strip().upper(),
-        driver_name=body.driver_name.strip(), driver_id=body.driver_id.strip(), notes=body.notes.strip(), user_id=user.id, user_name=user.name,
-    )
-    r.items = [RemissionItem(product_id=i.product_id, description=i.description.strip(), unit=i.unit.strip() or "und", qty=i.qty) for i in body.items]
-    db.add(r)
-    db.flush()
-    audit(db, user, "Emitió guía de remisión", f"{r.number} · {r.recipient_name} · {len(r.items)} línea(s)" + (f" · factura {ref.number}" if ref else ""), "remision", r.id)
-    db.commit()
-    return remission_out(db, r)
-
-
-@app.post("/api/remissions/{rid}/void")
-def void_remission(rid: int, db: Session = Depends(get_db), user: User = Depends(require("anular"))):
-    ensure_module(db, "docs_fiscales")
-    r = db.get(Remission, rid)
-    if not r:
-        raise HTTPException(404, "Guía de remisión no encontrada")
-    if r.status == "Anulada":
-        raise HTTPException(400, "La guía ya está anulada")
-    r.status = "Anulada"  # el número queda registrado como anulado
-    audit(db, user, "Anuló guía de remisión", r.number, "remision", r.id)
-    db.commit()
-    return remission_out(db, r)
 
 
 # ───────────────────────── Reabastecimiento (módulo adicional) ─────────────────────────
@@ -5750,7 +5592,6 @@ def backup_database(label: str, company: Optional["Company"] = None) -> str:
 
 def fiscal_documents_with_real_cai(db: Session) -> list:
     rows = db.query(Document.number, Document.cai_code).filter(Document.kind.in_(["factura", "nota", "debito"]), Document.cai_code != "").all()
-    rows += db.query(Remission.number, Remission.cai_code).filter(Remission.cai_code != "").all()
     return [n for n, cai in rows if cai and cai not in DEMO_CAIS]
 
 
@@ -5778,7 +5619,7 @@ def reset_database(body: ResetIn, db: Session = Depends(get_db), user: User = De
     keep_catalog = body.mode == "movimientos"
     # Orden pensado para MySQL: primero lo que apunta a otras tablas.
     db.query(Document).update({Document.ref_document_id: None}, synchronize_session=False)
-    for model in (RemissionItem, Remission, DocumentItem, Payment, Document, SupplierPayment, PurchaseReturnItem, PurchaseReturn, PurchaseItem, Purchase,
+    for model in (DocumentItem, Payment, Document, SupplierPayment, PurchaseReturnItem, PurchaseReturn, PurchaseItem, Purchase,
                   InventoryCountLine, InventoryCount, BankMove, StockMove, Stock, CashMove, CashShift):
         db.query(model).delete(synchronize_session=False)
     if keep_catalog:
