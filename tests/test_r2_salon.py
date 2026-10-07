@@ -407,3 +407,12 @@ def test_las_propinas_entran_al_cuadre_del_turno_y_del_dia(client, auth, login, 
     lines = {x["method"]: x for x in rec.json()["lines"]}
     assert lines["Efectivo"]["expected"] == 566 and lines["Tarjeta"]["expected"] == 110  # lo esperado incluye las propinas
     assert rec.json()["result"] == "cuadra"
+
+
+def test_formas_de_mesa_y_puerta_se_aceptan_y_las_demas_no(client, auth, rest):
+    sid = rest["salon"]["id"]
+    forma = lambda shape, kind="mesa", name="X": client.put(f"/api/salons/{sid}/layout", json={"items": [{"kind": kind, "name": name, "shape": shape, "seats": 4}]}, headers=auth)
+    for shape in ("cuadrada", "redonda", "rectangular", "ovalada", "cabina", "barra", "alta", "sofa"):
+        assert forma(shape).status_code == 200, shape
+    assert forma("rectangular", "puerta", "").status_code == 200  # la puerta es un elemento más del plano
+    assert forma("hexagonal").status_code == 400

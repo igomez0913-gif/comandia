@@ -684,3 +684,35 @@ tr.total-row td { font-weight: 700; background: var(--panel-2, rgba(127,127,127,
 .tg strong { font-size: 26px; } .tg small { font-size: 12px; text-align: center; } .tg span { font-weight: 700; }
 .tg.libre { background: var(--ok-bg); border-color: var(--ok-fg); color: var(--ok-fg); } .tg.ocupada { background: var(--warn-bg); border-color: var(--warn-fg); color: var(--warn-fg); }
 .tg.lista { animation: pulse 1.4s ease-in-out infinite; border-color: var(--brand); } .tg.sel { outline: 4px solid var(--focus); }
+
+/* ───────── mesas dibujadas con sillas ───────── */
+.tsvg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.fi.mesa, .fi.mesa.libre, .fi.mesa.ocupada { background: transparent; border: 0; box-shadow: none; border-radius: 0; padding: 0; overflow: visible; --tb: var(--ok-bg); --tc: var(--ok-fg); --ch: var(--surface); }
+.fi.mesa.ocupada { --tb: var(--warn-bg); --tc: var(--warn-fg); --ch: var(--warn-line); }
+.fi.mesa.sel { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 12px; }
+.fi.mesa.lista .tsvg { animation: pulseSvg 1.4s ease-in-out infinite; }
+@keyframes pulseSvg { 50% { filter: drop-shadow(0 0 7px var(--brand)); } }
+.t-top { fill: var(--tb); stroke: var(--tc); stroke-width: 2; }
+.t-chair { fill: var(--ch); stroke: var(--tc); stroke-width: 1.5; }
+.t-back { fill: var(--tc); opacity: .8; }
+.t-div { stroke: var(--tc); stroke-width: 1.5; opacity: .55; }
+.t-leaf { fill: var(--ok-fg); opacity: .8; } .t-pot { fill: var(--warn-fg); }
+.t-door { stroke: var(--text-2); stroke-width: 4; stroke-linecap: round; } .t-swing { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.fi-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; line-height: 1.1; }
+.fi.barra .fi-label { bottom: auto; height: max(36%, 22px); flex-direction: row; justify-content: center; align-items: center; gap: 10px; padding: 0 8px; } .fi.barra .fi-label strong { font-size: 18px; } .fi.barra .fi-label small, .fi.barra .fi-label span { font-size: 13px; }
+.fi.alta .fi-label strong { font-size: 22px; }
+.fi.planta, .fi.puerta, .fi.mobiliario.sofa { background: transparent; border: 0; overflow: visible; --tc: var(--text-2); --ch: var(--surface-3); }
+.fi.planta { border-radius: 0; } .fi.puerta { border-radius: 0; }
+.fi.mobiliario.sofa { --tc: var(--muted); --ch: var(--surface-3); }
+.fi-text { position: relative; z-index: 1; font-size: 12px; font-weight: 600; color: inherit; }
+.plano-layout { grid-template-columns: minmax(0, 1fr) 330px; }
+.preset-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; width: 100%; }
+.preset { display: flex; flex-direction: column; align-items: center; gap: 3px; border: 1px solid var(--line-strong); background: var(--surface); border-radius: 10px; padding: 6px 4px 5px; cursor: pointer; font: inherit; color: var(--text); }
+.preset:hover { border-color: var(--brand); background: var(--brand-soft); } .preset small { font-size: 11px; line-height: 1.15; text-align: center; color: var(--text-2); }
+.preset .pv { position: relative; display: block; width: 100%; height: 56px; --tb: var(--ok-bg); --tc: var(--ok-fg); --ch: var(--surface); }
+.preset .pv .tsvg { position: static; width: 100%; height: 100%; }
+.pv-pared::after { content: ""; position: absolute; left: 8px; right: 8px; top: 25px; height: 6px; background: var(--text-2); border-radius: 2px; }
+.pv-piso::after { content: ""; position: absolute; inset: 8px 14px; background: var(--surface-3); border: 1px dotted var(--muted); border-radius: 3px; }
+.pv-mobiliario:not(:has(svg))::after { content: ""; position: absolute; left: 10px; right: 10px; top: 18px; height: 20px; background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: 4px; }
+.fi.cabina.ocupada .fi-label small, .fi.alta.ocupada .fi-label small { display: none; }  /* la mesa es angosta: se muestra solo el número y el total */
+.fi.alta.ocupada .fi-label span { font-size: 12px; }

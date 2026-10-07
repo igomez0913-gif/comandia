@@ -109,7 +109,7 @@ function paintSalon() {
 function floorBounds(items) {
   return { w: Math.max(900, ...items.map((i) => i.x + i.w + 24)), h: Math.max(520, ...items.map((i) => i.y + i.h + 24)) };
 }
-const KIND_Z = { piso: 0, pared: 1, mobiliario: 2, planta: 3, mesa: 4 };
+const KIND_Z = { piso: 0, pared: 1, mobiliario: 2, puerta: 2, planta: 3, mesa: 4 };
 function floorItemStyle(i) { return `left:${i.x}px;top:${i.y}px;width:${i.w}px;height:${i.h}px;transform:rotate(${i.rotation || 0}deg);z-index:${KIND_Z[i.kind] ?? 2}`; }
 
 const isPhone = () => window.innerWidth < 640;
@@ -129,10 +129,10 @@ function floorHtml(salon) {
   const b = floorBounds(salon.items);
   const readyTabs = new Set(SALON.ready.map((r) => r.tab_id));
   return `<div class="floor-size" style="width:${b.w}px;height:${b.h}px" data-w="${b.w}" data-h="${b.h}">` + [...salon.items].sort((a, c) => (KIND_Z[a.kind] ?? 2) - (KIND_Z[c.kind] ?? 2)).map((i) => {
-    if (i.kind !== "mesa") return `<div class="fi ${i.kind} ${i.shape}" style="${floorItemStyle(i)}" aria-hidden="true">${i.kind === "mobiliario" || i.kind === "planta" ? esc(i.name) : ""}</div>`;
+    if (i.kind !== "mesa") return `<div class="fi ${i.kind} ${i.shape}" style="${floorItemStyle(i)}" aria-hidden="true">${decorSvg(i.kind, i.shape, i.w, i.h)}${["mobiliario", "planta"].includes(i.kind) && i.shape !== "sofa" ? `<span class="fi-text">${esc(i.name)}</span>` : i.kind === "mobiliario" ? `<span class="fi-text">${esc(i.name)}</span>` : ""}</div>`;
     const t = i.tab, sel = SALON.tab && t && SALON.tab.id === t.id;
     return `<button type="button" class="fi mesa ${i.shape} ${t ? "ocupada" : "libre"} ${t && readyTabs.has(t.id) ? "lista" : ""} ${sel ? "sel" : ""}" style="${floorItemStyle(i)}" data-table="${i.id}" aria-label="Mesa ${esc(i.name)} ${t ? "ocupada" : "libre"}">
-      <strong>${esc(i.name)}</strong>${t ? `<span>${money(t.total)}</span><small>${fmtMin(t.minutes || 0)}</small>${t.pending ? `<i class="dot-pend" title="Productos sin enviar">${t.pending}</i>` : ""}` : `<small>${i.seats} lugares</small>`}</button>`;
+      ${tableSvg(i.shape, i.w, i.h, i.seats)}<div class="fi-label" style="transform:rotate(${-(i.rotation || 0)}deg)"><strong>${esc(i.name)}</strong>${t ? `<span>${money(t.total)}</span><small>${fmtMin(t.minutes || 0)}</small>` : `<small>${i.seats} lugares</small>`}</div>${t && t.pending ? `<i class="dot-pend" title="Productos sin enviar">${t.pending}</i>` : ""}</button>`;
   }).join("") + `</div>`;
 }
 

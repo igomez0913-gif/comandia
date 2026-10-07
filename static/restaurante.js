@@ -17,8 +17,7 @@ async function renderRestaurant(root) {
 
 /* ───────── plano de salones ───────── */
 const PL = { salons: [], items: [], sel: null, dirty: false, key: 0, scale: 1 };
-const PL_KINDS = [["mesa", "Mesa"], ["mobiliario", "Mobiliario"], ["planta", "Planta"], ["pared", "Pared"], ["piso", "Piso"]];
-const PL_DEFAULT = { mesa: [90, 90], mobiliario: [200, 50], planta: [60, 60], pared: [300, 12], piso: [200, 200] };
+const PL_KINDS = [["mesa", "Mesa"], ["mobiliario", "Mobiliario"], ["planta", "Planta"], ["pared", "Pared"], ["piso", "Piso"], ["puerta", "Puerta"]];
 
 async function renderPlano(root) {
   PL.salons = await api("/api/salons");
@@ -37,13 +36,17 @@ function paintPlano(root) {
     <div class="salon-tabs">${PL.salons.map((x) => `<button class="tab-chip ${x.id === restState.salonId ? "on" : ""}" data-ps="${x.id}">${esc(x.name)}</button>`).join("") || `<span class="muted">Crea tu primer salón (por ejemplo «Salón principal» o «Terraza»).</span>`}</div>
     ${s ? `<div class="plano-layout"><div><div class="floor edit" id="pl-floor"><div class="floor-size" id="pl-size" style="width:${b.w}px;height:${b.h}px" data-w="${b.w}" data-h="${b.h}">${PL.items.map(planoItem).join("")}</div></div>
         <p class="muted small">Arrastra los elementos para moverlos. Toca uno para editar su nombre, tamaño y giro. Las mesas necesitan un nombre o número distinto.</p></div>
-      <aside class="plano-side"><div class="palette"><strong>Agregar</strong>${PL_KINDS.map(([k, l]) => `<button type="button" class="btn sm" data-addk="${k}">+ ${l}</button>`).join("")}</div>
+      <aside class="plano-side"><div class="palette"><strong>Agregar al plano</strong><p class="muted small">Toca un modelo para ponerlo en el salón. Pasa el cursor para ver para qué sirve.</p>
+          <div class="preset-grid">${TABLE_PRESETS.map((p) => `<button type="button" class="preset" data-preset="${p.id}" title="${esc(p.info)}"><span class="pv pv-${p.kind}">${p.kind === "mesa" || p.shape === "sofa" ? tableSvg(p.shape, p.w, p.h, p.seats) : decorSvg(p.kind, p.shape, p.w, p.h)}</span><small>${esc(p.label)}</small></button>`).join("")}</div></div>
         <div id="pl-props">${propsHtml()}</div>
         <button class="btn primary full" id="pl-save" ${PL.dirty ? "" : "disabled"}>Guardar plano</button></aside></div>` : ""}</div>`;
   fitPlano(); bindPlano(root);
 }
 function planoItem(i) {
-  return `<div class="fi ${i.kind} ${i.shape} edit ${PL.sel === i._k ? "sel" : ""}" data-k="${i._k}" style="${floorItemStyle(i)}" tabindex="0" role="button" aria-label="${esc(i.kind)} ${esc(i.name)}">${i.kind === "mesa" ? `<strong>${esc(i.name || "?")}</strong><small>${i.seats} lugares</small>${i.tab ? `<i class="lock" title="Tiene una cuenta abierta">●</i>` : ""}` : esc(i.name)}</div>`;
+  const cls = `fi ${i.kind} ${i.shape} edit ${PL.sel === i._k ? "sel" : ""}`;
+  const attrs = `data-k="${i._k}" style="${floorItemStyle(i)}" tabindex="0" role="button" aria-label="${esc(i.kind)} ${esc(i.name)}"`;
+  if (i.kind === "mesa") return `<div class="${cls} libre" ${attrs}>${tableSvg(i.shape, i.w, i.h, i.seats)}<div class="fi-label" style="transform:rotate(${-(i.rotation || 0)}deg)"><strong>${esc(i.name || "?")}</strong><small>${i.seats} lugares</small></div>${i.tab ? `<i class="lock" title="Tiene una cuenta abierta">●</i>` : ""}</div>`;
+  return `<div class="${cls}" ${attrs}>${decorSvg(i.kind, i.shape, i.w, i.h)}${i.kind === "mobiliario" || i.kind === "planta" ? `<span class="fi-text">${esc(i.name)}</span>` : ""}</div>`;
 }
 function fitPlano() {
   const box = $("#pl-floor"), size = $("#pl-size"); if (!box || !size) return;
@@ -56,7 +59,7 @@ function propsHtml() {
   const num = (k, label, min, max) => `<label>${label}<input type="number" data-p="${k}" value="${i[k]}" min="${min}" max="${max}" step="${k === "x" || k === "y" ? 10 : 1}" /></label>`;
   return `<div class="props form"><h4 class="full">${PL_KINDS.find((k) => k[0] === i.kind)[1]}</h4>
     <label class="full">${i.kind === "mesa" ? "Nombre o número" : "Texto (opcional)"}<input data-p="name" value="${esc(i.name)}" maxlength="40" autocomplete="off" /></label>
-    <label>Forma<select data-p="shape">${["cuadrada", "redonda", "rectangular"].map((s) => `<option ${i.shape === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+    <label>Forma<select data-p="shape">${Object.entries(SHAPE_LABEL).map(([v, l]) => `<option value="${v}" ${i.shape === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
     ${i.kind === "mesa" ? num("seats", "Lugares", 0, 50) : ""}${num("w", "Ancho", 10, 2000)}${num("h", "Alto", 10, 2000)}${num("x", "Izquierda", 0, 5000)}${num("y", "Arriba", 0, 5000)}${num("rotation", "Giro (°)", 0, 359)}
     <div class="full actions"><button type="button" class="btn sm" id="pl-dup">Duplicar</button><button type="button" class="btn danger sm" id="pl-rm">Quitar</button></div></div>`;
 }
@@ -66,7 +69,7 @@ function bindPlano(root) {
   if (!$("#pl-size")) return;
   $("#pl-ren").onclick = () => { const s = PL.salons.find((x) => x.id === restState.salonId); openModal("Renombrar salón", [{ name: "name", label: "Nombre", value: s.name, required: true, full: true }], (b) => api("/api/salons/" + s.id, { method: "PUT", body: { name: b.name } })); };
   $("#pl-del").onclick = async () => { if (await askConfirm("¿Eliminar este salón y su plano? Las mesas con cuentas abiertas lo impiden.", "Eliminar", true)) { try { await api("/api/salons/" + restState.salonId, { method: "DELETE" }); restState.salonId = null; render(); } catch (err) { toast(err.message, "err"); } } };
-  $$("[data-addk]", root).forEach((b) => b.onclick = () => addPlanoItem(b.dataset.addk, root));
+  $$("[data-preset]", root).forEach((b) => b.onclick = () => addPlanoItem(b.dataset.preset));
   $("#pl-save").onclick = () => savePlano();
   $$(".fi.edit", root).forEach((el) => bindDrag(el, root));
   bindProps(root);
@@ -83,12 +86,13 @@ function bindProps(root) {
 function markDirty() { const b = $("#pl-save"); if (b) b.disabled = !PL.dirty; }
 function repaintItem(i) { const el = $(`.fi.edit[data-k="${i._k}"]`); if (!el) return; el.outerHTML = planoItem(i); const n = $(`.fi.edit[data-k="${i._k}"]`); bindDrag(n, $("#rest-body")); }
 function refreshBounds() { const b = floorBounds(PL.items), size = $("#pl-size"); size.style.width = b.w + "px"; size.style.height = b.h + "px"; size.dataset.w = b.w; size.dataset.h = b.h; fitPlano(); }
-function addPlanoItem(kind, root) {
-  const [w, h] = PL_DEFAULT[kind];
-  const n = PL.items.filter((i) => i.kind === "mesa").length + 1;
+function addPlanoItem(presetId) {
+  const p = TABLE_PRESETS.find((x) => x.id === presetId);
   const used = new Set(PL.items.map((i) => i.name));
-  let name = ""; if (kind === "mesa") { let k = n; while (used.has(String(k))) k++; name = String(k); }
-  const i = { _k: ++PL.key, kind, name, shape: kind === "mesa" && n % 3 === 0 ? "redonda" : kind === "planta" ? "redonda" : kind === "mesa" ? "cuadrada" : "rectangular", x: 40, y: 40, w, h, rotation: 0, seats: kind === "mesa" ? 4 : 0 };
+  let name = "";
+  if (p.kind === "mesa") { let k = PL.items.filter((i) => i.kind === "mesa").length + 1; while (used.has(String(k))) k++; name = p.shape === "barra" ? `B${PL.items.filter((i) => i.shape === "barra").length + 1}` : String(k); }
+  else if (p.kind === "mobiliario") name = p.shape === "sofa" ? "Sofá" : "Mueble";
+  const i = { _k: ++PL.key, kind: p.kind, name, shape: p.shape, x: 40, y: 40, w: p.w, h: p.h, rotation: 0, seats: p.seats };
   PL.items.push(i); PL.sel = i._k; PL.dirty = true; paintPlano($("#rest-body"));
 }
 function bindDrag(el, root) {

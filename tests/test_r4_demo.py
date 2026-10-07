@@ -37,7 +37,7 @@ def test_el_menu_tiene_costos_por_receta_con_margen_sano(client, demo):
 def test_salones_y_descriptivos_de_demostracion(client, demo):
     salons = client.get("/api/salons", headers=demo).json()
     assert [s["name"] for s in salons] == ["Salón principal", "Terraza"]
-    assert sum(1 for s in salons for i in s["items"] if i["kind"] == "mesa") == 12
+    assert sum(1 for s in salons for i in s["items"] if i["kind"] == "mesa") == 13
     deps = {d["name"]: d["id"] for d in client.get("/api/departments", headers=demo).json()["departments"]}
     names = sorted(d["name"] for d in client.get(f"/api/descriptives?department_id={deps['Hamburguesas']}", headers=demo).json())
     assert "Extra queso" in names and "Sin cebolla" in names and "Con hielo" not in names

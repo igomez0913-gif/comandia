@@ -150,7 +150,7 @@ def test_disenar_el_plano_arrastrar_y_guardar(server, browser):
     _login(pg, server)
     pg.click('[data-view="restaurante"]')
     pg.wait_for_selector("#pl-size")
-    pg.click('[data-addk="mesa"]')
+    pg.click('[data-preset="mesa4"]')
     pg.wait_for_selector("#pl-props .props")
     pg.fill('[data-p="name"]', "VIP1")
     pg.fill('[data-p="seats"]', "6")

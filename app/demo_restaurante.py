@@ -76,14 +76,20 @@ DESCRIPTIVOS = [  # (nombre, familia o None = todas, recargo)
     ("Término medio", "Hamburguesas", 0), ("Bien cocida", "Hamburguesas", 0), ("Extra queso", "Hamburguesas", 15), ("Extra tocino", "Hamburguesas", 20),
     ("Sin pepinillos", "Hamburguesas", 0), ("Con hielo", "Bebidas", 0), ("Sin hielo", "Bebidas", 0), ("Con limón", "Bebidas", 0), ("Con leche", "Bebidas", 5),
 ]
+# (tipo, nombre, forma, x, y, lugares, ancho, alto): los tamaños incluyen el espacio de las sillas
 SALONES = {
     "Salón principal": [
-        *[("mesa", str(n), "cuadrada" if n % 3 else "redonda", 40 + (n - 1) % 4 * 150, 70 + (n - 1) // 4 * 150, 4 if n % 3 else 2) for n in range(1, 9)],
-        ("mobiliario", "Barra", "rectangular", 40, 400, 0), ("planta", "Planta", "redonda", 700, 60, 0), ("pared", "", "rectangular", 0, 0, 0),
+        ("mesa", "1", "cuadrada", 30, 50, 2, 96, 110), ("mesa", "2", "cuadrada", 150, 50, 2, 96, 110), ("mesa", "3", "cuadrada", 270, 50, 4, 120, 120),
+        ("mesa", "4", "redonda", 415, 45, 4, 120, 120), ("mesa", "5", "redonda", 560, 30, 6, 150, 150),
+        ("mesa", "6", "rectangular", 30, 200, 6, 190, 120), ("mesa", "7", "cabina", 250, 200, 4, 190, 120), ("mesa", "8", "cabina", 470, 200, 4, 190, 120),
+        ("mesa", "B1", "barra", 30, 380, 6, 320, 90), ("mobiliario", "Caja", "rectangular", 400, 400, 0, 200, 50),
+        ("planta", "", "redonda", 790, 60, 0, 64, 64), ("puerta", "", "rectangular", 780, 400, 0, 90, 90), ("pared", "", "rectangular", 0, 0, 0, 880, 12),
     ],
-    "Terraza": [*[("mesa", f"T{n}", "cuadrada", 40 + (n - 1) * 150, 90, 4) for n in range(1, 5)], ("planta", "Planta", "redonda", 660, 300, 0)],
+    "Terraza": [
+        ("mesa", "T1", "alta", 40, 60, 2, 90, 90), ("mesa", "T2", "alta", 160, 60, 2, 90, 90),
+        ("mesa", "T3", "redonda", 300, 40, 4, 120, 120), ("mesa", "T4", "redonda", 450, 40, 4, 120, 120), ("planta", "", "redonda", 660, 60, 0, 64, 64),
+    ],
 }
-SIZES = {"mesa": (90, 90), "mobiliario": (420, 60), "planta": (60, 60), "pared": (880, 12), "piso": (200, 200)}
 
 
 def seed_restaurante(db: Session):
@@ -131,8 +137,7 @@ def seed_restaurante(db: Session):
         salon = Salon(name=salon_name, sort_order=order)
         db.add(salon)
         db.flush()
-        for kind, name, shape, x, y, seats in items:
-            w, h = SIZES[kind]
+        for kind, name, shape, x, y, seats, w, h in items:
             db.add(FloorItem(salon_id=salon.id, kind=kind, name=name, shape=shape, x=x, y=y, w=w, h=h, seats=seats))
 
     for name, rtn in (("Consumidor final", ""), ("Cliente frecuente", "08019988001122")):

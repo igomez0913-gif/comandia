@@ -15,8 +15,9 @@ from app.main import (
     authorize_with_pin, current_user, get_db, has_perm, money, next_seq_number, now_local, require, resolve_line, price_for_level,
 )
 
-FLOOR_KINDS = ("mesa", "mobiliario", "planta", "pared", "piso")
-SHAPES = ("cuadrada", "redonda", "rectangular")
+FLOOR_KINDS = ("mesa", "mobiliario", "planta", "pared", "piso", "puerta")
+# Formas: cuadrada, redonda, rectangular y ovalada (mesas con sillas alrededor), cabina (sofás enfrentados), barra (mostrador con bancos), alta (mesa de coctel con bancos) y sofá.
+SHAPES = ("cuadrada", "redonda", "rectangular", "ovalada", "cabina", "barra", "alta", "sofa")
 ACTIVE_LINE = ("nueva", "enviada")  # lo que todavía se debe cobrar
 
 
