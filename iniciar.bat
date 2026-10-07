@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Comandia - Gestion comercial (MySQL)
+title Comandia - Gestion para restaurantes (MySQL)
 set PORT=8000
 
 rem --- Si ya hay un Comandia corriendo en este puerto, solo abre el navegador

@@ -1,4 +1,4 @@
-/* Comandia v2.9 · Gestión comercial SAR Honduras · Ing. Israel Gómez / Soluciones Tecnológicas HN */
+/* Comandia · Gestión para restaurantes · SAR Honduras · Ing. Israel Gómez / Soluciones Tecnológicas HN */
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 let token = localStorage.getItem("comandia_token") || "";
@@ -2082,7 +2082,7 @@ async function renderShiftHistory(root) {
     try {
       const sh = await api("/api/shifts/" + b.dataset.shift);
       if (sh.status === "Cerrado") return printShift(sh);
-      openForm(`Turno abierto · ${sh.register} · ${sh.user}`, `<div class="full">${table(["FORMA", "ESPERADO AHORA"], Object.entries(sh.expected).map(([m, v]) => `<tr><td>${esc(m)}</td><td>${money(v)}</td></tr>`))}
+      openForm(`Turno abierto · ${sh.register} · ${sh.user}`, `<div class="full">${table(["FORMA", "ESPERADO AHORA"], Object.entries(sh.expected).map(([m, v]) => `<tr><td>${esc(m)}${sh.tips && sh.tips[m] ? ` <small class="muted">(incluye propinas ${money(sh.tips[m])})</small>` : ""}</td><td>${money(v)}</td></tr>`))}
         <p class="muted">Abierto ${when(sh.opened_at)} · fondo ${money(sh.opening)} · ${sh.payments.length} cobro(s) · ${sh.moves.length} movimiento(s). Lo cierra el cajero desde «Mi turno».</p></div>`, null);
     } catch (err) { toast(err.message, "err"); }
   });
@@ -2102,9 +2102,11 @@ async function printShift(sh) {
     <div class="two"><div><h2>Efectivo</h2><table>
       <tr><td>Fondo inicial</td><td class="r">${money(sh.opening)}</td></tr>
       <tr><td>Cobrado en efectivo</td><td class="r">${money(sh.by_method.find((m) => m.method === "Efectivo")?.total || 0)}</td></tr>
+      ${sh.tips && sh.tips.Efectivo ? `<tr><td>Propinas en efectivo</td><td class="r">+ ${money(sh.tips.Efectivo)}</td></tr>` : ""}
       <tr><td>Ingresos</td><td class="r">+ ${money(mt.Ingreso)}</td></tr><tr><td>Retiros a caja fuerte</td><td class="r">− ${money(mt.Retiro)}</td></tr><tr><td>Gastos pagados de caja</td><td class="r">− ${money(mt.Gasto)}</td></tr>
       <tr><td><b>Debía haber en gaveta</b></td><td class="r"><b>${money(sh.expected.Efectivo)}</b></td></tr></table></div>
-    <div><h2>Cobrado en el turno</h2><table>${sh.by_method.map((m) => `<tr><td>${esc(m.method)}</td><td class="r">${money(m.total)}</td></tr>`).join("")}<tr><td><b>Total</b></td><td class="r"><b>${money(sh.collected)}</b></td></tr></table></div></div>
+    <div><h2>Cobrado en el turno</h2><table>${sh.by_method.map((m) => `<tr><td>${esc(m.method)}</td><td class="r">${money(m.total)}</td></tr>`).join("")}<tr><td><b>Total</b></td><td class="r"><b>${money(sh.collected)}</b></td></tr></table>
+      ${sh.tips_total ? `<p class="muted small">Además se recibieron propinas por ${money(sh.tips_total)} (${Object.entries(sh.tips).map(([m, v]) => `${esc(m)} ${money(v)}`).join(", ")}): no son ventas, pero están en la gaveta o el datáfono y ya cuentan en lo esperado.</p>` : ""}</div></div>
     ${sh.moves.length ? `<h2>Movimientos de efectivo</h2><table><thead><tr><th>Hora</th><th>Tipo</th><th>Concepto</th><th>Registró</th><th class="r">Monto</th></tr></thead><tbody>${sh.moves.map((m) => `<tr><td>${hhmm(m.created_at)}</td><td>${esc(m.kind)}</td><td>${esc(m.concept)}</td><td>${esc(m.user)}</td><td class="r">${money(m.amount)}</td></tr>`).join("")}</tbody></table>` : ""}
     <h2>Detalle de cobros</h2><table><thead><tr><th>Hora</th><th>Documento</th><th>Cliente</th><th>Forma</th><th class="r">Monto</th></tr></thead><tbody>
       ${sh.payments.map((p) => `<tr><td>${hhmm(p.time)}</td><td>${esc(p.number)}</td><td>${esc(p.client)}</td><td>${esc(p.method)}</td><td class="r">${money(p.amount)}</td></tr>`).join("") || `<tr><td colspan="5">Sin cobros</td></tr>`}</tbody></table>

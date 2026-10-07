@@ -379,3 +379,31 @@ def test_la_cuenta_informa_los_minutos_y_el_estado_de_cocina(client, auth, rest)
     lid = sent["lines"][0]["id"]
     client.put(f"/api/kitchen/lines/{lid}/status", json={"status": "listo"}, headers=auth)
     assert client.get(f"/api/tabs/{t['id']}", headers=auth).json()["lines"][0]["kds"] == "listo"
+
+
+def test_las_propinas_entran_al_cuadre_del_turno_y_del_dia(client, auth, login, rest):
+    cajero = make_user(client, auth, login, "Cajero", "Carla Caja")
+    sh = client.post("/api/shifts/open", json={"caja": "Caja 1", "opening": 500}, headers=cajero).json()
+    t = open_tab(client, cajero, rest)
+    add(client, cajero, t, rest["burger"], 1)  # L 100
+    client.post(f"/api/tabs/{t['id']}/send", headers=cajero)
+    pay = client.post(f"/api/tabs/{t['id']}/pay", json={"payments": [{"method": "Tarjeta", "amount": 100}], "tip": 10, "tip_method": "Tarjeta"}, headers=cajero)
+    assert pay.status_code == 200, pay.text
+    t2 = open_tab(client, cajero, rest, "2")
+    add(client, cajero, t2, rest["cola"], 2)  # L 60
+    client.post(f"/api/tabs/{t2['id']}/send", headers=cajero)
+    client.post(f"/api/tabs/{t2['id']}/pay", json={"payments": [{"method": "Efectivo", "amount": 60}], "tip": 6, "tip_method": "Efectivo"}, headers=cajero)
+    cur = client.get(f"/api/shifts/{sh['id']}", headers=cajero).json()
+    # efectivo: fondo 500 + cobro 60 + propina 6 · tarjeta: cobro 100 + propina 10
+    assert cur["expected"]["Efectivo"] == 566 and cur["expected"]["Tarjeta"] == 110 and cur["tips"] == {"Efectivo": 6.0, "Tarjeta": 10.0} and cur["tips_total"] == 16
+    assert cur["collected"] == 160  # las propinas no son ventas
+    done = client.post(f"/api/shifts/{sh['id']}/close", json={"counted": {"Efectivo": 566, "Tarjeta": 110, "Transferencia": 0}}, headers=cajero).json()
+    assert done["difference"] == 0 and done["tips_total"] == 16
+    # el corte del día muestra las propinas y las suma a lo esperado
+    corte = client.get("/api/cash/close", headers=cajero).json()
+    assert corte["tips_total"] == 16 and {x["method"]: x["total"] for x in corte["tips"]} == {"Efectivo": 6.0, "Tarjeta": 10.0} and corte["collected"] == 160
+    rec = client.post("/api/cash/close/record", json={"opening": 500, "counted": {"Efectivo": 566, "Tarjeta": 110, "Transferencia": 0}}, headers=cajero)
+    assert rec.status_code == 200, rec.text
+    lines = {x["method"]: x for x in rec.json()["lines"]}
+    assert lines["Efectivo"]["expected"] == 566 and lines["Tarjeta"]["expected"] == 110  # lo esperado incluye las propinas
+    assert rec.json()["result"] == "cuadra"

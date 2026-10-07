@@ -1,4 +1,4 @@
-"""Comandia — gestión comercial con facturación SAR Honduras e inventario multibodega."""
+"""Comandia — gestión para restaurantes, cafés y bares: salón, cuentas, comandas, cocina, caja y facturación SAR Honduras."""
 import csv
 import hashlib
 import math
@@ -1002,7 +1002,7 @@ async def lifespan(_app):
 
 
 _docs = os.environ.get("COMANDIA_DOCS") == "1"  # la documentación interactiva de la API solo se abre a propósito
-app = FastAPI(title="Comandia", version="3.4.4", lifespan=lifespan, docs_url="/docs" if _docs else None, redoc_url="/redoc" if _docs else None, openapi_url="/openapi.json" if _docs else None)
+app = FastAPI(title="Comandia", version="1.0.0", lifespan=lifespan, docs_url="/docs" if _docs else None, redoc_url="/redoc" if _docs else None, openapi_url="/openapi.json" if _docs else None)
 # La interfaz se sirve desde el mismo origen, así que CORS queda cerrado salvo que se pida lo contrario.
 _origins = [o.strip() for o in os.environ.get("COMANDIA_CORS", "").split(",") if o.strip()]
 if _origins:
@@ -4911,6 +4911,19 @@ def _day_range(day: Optional[date]):
     return day, start, start + timedelta(days=1)
 
 
+def tips_by_method(db: Session, start: datetime, end: datetime, user_id: Optional[int] = None) -> dict:
+    """Propinas de las cuentas del salón cobradas en el período, por forma de pago. No son ventas (no llevan factura ni ISV), pero el dinero está en la caja
+    o en el datáfono, así que cuentan para el cuadre."""
+    from app.salon import TabSettlement  # el salón se carga después de este módulo
+    q = db.query(TabSettlement).filter(TabSettlement.created_at >= start, TabSettlement.created_at < end, TabSettlement.tip > 0)
+    if user_id:
+        q = q.filter(TabSettlement.user_id == user_id)
+    out: dict = {}
+    for t in q.all():
+        out[t.tip_method] = round(out.get(t.tip_method, 0.0) + money(t.tip), 2)
+    return out
+
+
 def cash_close_data(db: Session, user: User, day: Optional[date], user_id: Optional[int], store_id: Optional[int] = None) -> dict:
     """Corte del día: cobros por forma de pago y por usuario, más lo facturado ese día.
 
@@ -4946,7 +4959,9 @@ def cash_close_data(db: Session, user: User, day: Optional[date], user_id: Optio
     users = []
     if sees_all:
         users = [{"id": u.id, "name": u.name} for u in db.query(User).order_by(User.name).all()]
+    tips = tips_by_method(db, start, end, user_id)
     return {
+        "tips": [{"method": m, "total": t} for m, t in tips.items()], "tips_total": round(sum(tips.values()), 2), "tips_by_method": tips,
         "day": day.isoformat(),
         "user_id": user_id,
         "sees_all": sees_all,
@@ -4993,7 +5008,7 @@ def cash_reconcile(data: dict, opening: float, counted: dict) -> list:
     for m in data["by_method"]:
         if m["method"] == WITHHOLDING:
             continue
-        expected = round(m["total"] + (opening if m["method"] == "Efectivo" else 0), 2)
+        expected = round(m["total"] + data.get("tips_by_method", {}).get(m["method"], 0.0) + (opening if m["method"] == "Efectivo" else 0), 2)
         got = counted.get(m["method"])
         lines.append({"method": m["method"], "system": m["total"], "expected": expected,
                       "counted": None if got is None else round(got, 2), "difference": None if got is None else round(got - expected, 2)})
@@ -5073,6 +5088,9 @@ def shift_summary(db: Session, sh: CashShift) -> dict:
     opening = money(sh.opening)
     expected = {m: t for m, t in by_method.items()}
     expected["Efectivo"] = round(opening + by_method["Efectivo"] + moves["Ingreso"] - moves["Retiro"] - moves["Gasto"], 2)
+    tips = tips_by_method(db, sh.opened_at, end, sh.user_id)  # las propinas están en la gaveta o en el datáfono: se esperan junto con lo cobrado
+    for method, amount in tips.items():
+        expected[method] = round(expected.get(method, 0.0) + amount, 2)
     store = db.get(Store, sh.store_id) if sh.store_id else None
     out = {
         "store_id": sh.store_id or default_store(db).id, "store": (store or default_store(db)).name,
@@ -5082,7 +5100,7 @@ def shift_summary(db: Session, sh: CashShift) -> dict:
         "collected": round(sum(by_method.values()), 2), "by_method": [{"method": m, "total": t} for m, t in by_method.items()],
         "moves": [{"id": m.id, "kind": m.kind, "amount": money(m.amount), "concept": m.concept, "user": m.user_name,
                    "created_at": m.created_at.isoformat() if m.created_at else None} for m in sh.moves],
-        "moves_total": moves, "expected": expected, "company": company_dict(db.query(Company).first() or Company()),
+        "tips": tips, "tips_total": round(sum(tips.values()), 2), "moves_total": moves, "expected": expected, "company": company_dict(db.query(Company).first() or Company()),
         "payments": [{"time": p.created_at.isoformat() if p.created_at else None, "number": p.document.number, "document_id": p.document_id,
                       "client": p.document.buyer_name or (p.document.client.name if p.document.client else ""), "method": p.method, "amount": money(p.amount)}
                      for p in pays if p.method != WITHHOLDING],
@@ -5091,7 +5109,7 @@ def shift_summary(db: Session, sh: CashShift) -> dict:
     if frozen:
         out["lines"] = frozen.get("lines", [])
         out["expected"] = frozen.get("expected", out["expected"])
-        for key in ("by_method", "collected", "payments"):  # turnos cerrados con la v3.3.1 o posterior (los anteriores se recalculan)
+        for key in ("by_method", "collected", "payments", "tips", "tips_total"):  # turnos cerrados: lo guardado al cerrar no cambia después
             if key in frozen:
                 out[key] = frozen[key]
     return out
@@ -5171,7 +5189,8 @@ def close_shift(sid: int, body: ShiftCloseIn, db: Session = Depends(get_db), use
     total = round(sum(x["difference"] for x in lines if x["difference"] is not None), 2)
     # El cuadre se congela completo al cerrar: MySQL redondea las fracciones de segundo, y recalcularlo después podía dejar fuera
     # un cobro hecho en el mismo segundo del cierre.
-    sh.summary = json.dumps({"expected": data["expected"], "lines": lines, "by_method": data["by_method"], "collected": data["collected"], "payments": data["payments"]}, ensure_ascii=False)
+    sh.summary = json.dumps({"expected": data["expected"], "lines": lines, "by_method": data["by_method"], "collected": data["collected"], "payments": data["payments"],
+                             "tips": data.get("tips", {}), "tips_total": data.get("tips_total", 0)}, ensure_ascii=False)
     sh.difference, sh.status, sh.closed_by, sh.note = total, "Cerrado", user.name, body.note.strip()
     audit(db, user, "Cerró turno de caja", f"{sh.register} · {sh.user_name} · fondo L {money(sh.opening):,.2f} · "
           + " · ".join(f"{x['method']}: esperado L {x['expected']:,.2f}, contado L {x['counted']:,.2f} ({diff_text(x['difference'])})" for x in lines if x["counted"] is not None)

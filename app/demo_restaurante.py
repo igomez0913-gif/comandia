@@ -91,7 +91,7 @@ def seed_restaurante(db: Session):
     if db.query(User).first():
         return
     db.add(User(name="Luis Mendoza", email="luis@miempresa.hn", password_hash=hash_password("comandia123"), role="Master", initials="LM"))
-    db.add(Company(name="Restaurante Demo", legal_name="Restaurante Demo, S. de R.L.", address="Tegucigalpa, Honduras", prices_include_tax=1))
+    db.add(Company(name="Restaurante Demo", legal_name="Restaurante Demo, S. de R.L.", address="Tegucigalpa, Honduras", prices_include_tax=1, pos_enabled=0))  # el salón reemplaza al punto de venta de mostrador
     wh = Warehouse(code="BOD", name="Bodega y cocina", address="Tegucigalpa")
     db.add(wh)
     db.flush()
