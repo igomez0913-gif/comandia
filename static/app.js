@@ -927,7 +927,8 @@ function creditNote(c, terms, total) {
 /* ───────── editor de factura / cotización / nota ───────── */
 async function newDocument(kind, opts = {}) {
   const from = kind === "nota" ? opts.from || null : null; // factura que se acredita
-  const [clients, products, warehouses, series] = await Promise.all([api("/api/clients"), api("/api/products"), api("/api/warehouses"), kind === "factura" ? api("/api/series") : Promise.resolve([])]);
+  const [clients, products, warehouses, series, cfg] = await Promise.all([api("/api/clients"), api("/api/products"), api("/api/warehouses"), kind === "factura" ? api("/api/series") : Promise.resolve([]), api("/api/settings").catch(() => ({}))]);
+  const inclusive = !!cfg.prices_include_tax;  // restaurantes: el precio ya trae el ISV y el sistema lo separa hacia adentro
   const titles = { factura: "Nueva factura", cotizacion: "Nueva cotización", nota: "Nueva nota de crédito" };
   const offers = [];
   products.forEach((p) => p.presentations.forEach((pr) => offers.push({
@@ -958,7 +959,7 @@ async function newDocument(kind, opts = {}) {
     // Precarga las líneas de la factura con lo que aún se puede acreditar (en unidades base, por producto).
     const left = { ...(from.creditable || {}) };
     from.items.forEach((it) => {
-      const offer = offers.find((o) => o.presentation_id === it.presentation_id);
+      const offer = offers.find((o) => o.presentation_id === it.presentation_id) || (it.presentation_id ? null : offers.filter((o) => o.product_id === it.product_id).sort((a, b) => a.factor - b.factor)[0]);  // las facturas del salón no llevan presentación: se usa la unidad base
       const base = left[it.product_id] || 0;
       if (!offer || base <= 0) return;
       const qty = Math.min(it.qty, Math.floor((base / offer.factor) * 1e8 + 1e-3) / 1e8);  // hasta 8 decimales: la parte de un plato compartido se acredita exacta (el +1e-3 absorbe el error de la coma flotante: 0.29 × 1e8 = 28999999.999999996)
@@ -975,7 +976,12 @@ async function newDocument(kind, opts = {}) {
     const b = { exento: 0, exonerado: 0, gravado15: 0, gravado18: 0 };
     lines.forEach(redoDiscount); // un cambio de precio o de nivel no deja descuentos mayores que el importe
     lines.forEach((l) => { b[effTax(l.tax, curClient())] += lineNet(l); });
-    const isv15 = r2(b.gravado15 * 0.15), isv18 = r2(b.gravado18 * 0.18);
+    let isv15, isv18;
+    if (inclusive) {  // igual que el servidor: el ISV se separa por bloque y el total es exactamente lo que se cobra
+      const g15 = r2(b.gravado15), g18 = r2(b.gravado18);
+      b.gravado15 = r2(g15 / 1.15); b.gravado18 = r2(g18 / 1.18);
+      isv15 = r2(g15 - b.gravado15); isv18 = r2(g18 - b.gravado18);
+    } else { isv15 = r2(b.gravado15 * 0.15); isv18 = r2(b.gravado18 * 0.18); }
     const sub = r2(b.exento + b.exonerado + b.gravado15 + b.gravado18);
     const disc = r2(lines.reduce((x, l) => x + (l.discount || 0), 0));
     return { ...b, isv15, isv18, sub, disc, total: r2(sub + isv15 + isv18) };
@@ -1031,7 +1037,7 @@ async function newDocument(kind, opts = {}) {
       ${curClient().exonerated ? `<p class="info">Cliente exonerado (constancia ${esc(curClient().exo_registry)}): las líneas gravadas se facturan exoneradas, sin ISV.</p>` : ""}
       <div class="tabs"><button class="${tab === "lines" ? "on" : ""}" data-tab="lines">Líneas</button><button class="${tab === "notes" ? "on" : ""}" data-tab="notes">Notas</button></div>
       ${tab === "lines" ? `<div class="tbl-wrap"><table><thead><tr><th>Código</th><th>Descripción</th><th>Cantidad</th><th>UdM</th><th>Precio unitario</th><th>Descuento${!from && !can("descuentos") ? ` <span class="muted small" title="Al guardar, un supervisor lo aprueba con su PIN">· con PIN</span>` : ""}</th><th>ISV</th><th>Importe</th><th></th></tr></thead><tbody>
-        ${lines.map((l, i) => { return `<tr><td>${esc(l.sku)}</td><td>${esc(l.name)} · ${esc(l.present)}<div class="down small" id="lw-${i}">${overMsg(l)}</div></td><td><input data-qty="${i}" type="number" step="0.01" min="0.01" value="${l.qty}" ${lock} /></td><td>${esc(l.unit)}</td><td>${can("precios") || from ? `<input data-price="${i}" type="number" step="0.01" min="0" value="${l.price}" ${lock} ${can("precios") ? "" : "readonly"} />`
+        ${lines.map((l, i) => { return `<tr><td>${esc(l.sku)}</td><td>${esc(l.name)} · ${esc(l.present)}<div class="down small" id="lw-${i}">${overMsg(l)}</div></td><td><input data-qty="${i}" type="number" step="${kind === "nota" ? "any" : "0.01"}" min="0.00000001" value="${l.qty}" ${lock} /></td><td>${esc(l.unit)}</td><td>${can("precios") || from ? `<input data-price="${i}" type="number" step="0.01" min="0" value="${l.price}" ${lock} ${can("precios") ? "" : "readonly"} />`
           : `<select data-pricesel="${i}" ${lock} title="Tu rol elige entre los precios del catálogo">${priceChoices(l).map(({ v, i: n }) => `<option value="${v}" ${Math.abs(v - l.price) < 0.005 ? "selected" : ""}>${esc(levelName(n + 1))} · ${money(v)}</option>`).join("")}</select>`}</td><td>${canDiscount ? `<input data-disc="${i}" class="disc-input" inputmode="decimal" placeholder="L o %" value="${l.dpct != null ? `${l.dpct}%` : l.discount ? l.discount.toFixed(2) : ""}" ${lock} title="Lempiras, o porcentaje con %" /><div class="muted small" id="ld-${i}">${l.dpct != null && l.discount ? `= ${money(l.discount)}` : ""}</div>` : l.discount ? money(l.discount) : "—"}</td><td>${TAX_LABEL[effTax(l.tax, curClient())]}</td><td id="lt-${i}">${money(lineNet(l))}</td><td>${saved ? "" : `<button class="btn ghost sm" data-del="${i}" type="button" aria-label="Quitar línea">✕</button>`}</td></tr>`; }).join("") || `<tr><td colspan="9" class="muted">Busca un producto para agregarlo</td></tr>`}
         </tbody></table></div>
         ${saved ? "" : `<div class="sale-search"><input id="sale-q" placeholder="Escribe el SKU o la descripción (Enter agrega · ↑↓ navega)" autocomplete="off" /><div id="sale-hits" class="sale-hits"></div></div>`}`
@@ -1268,7 +1274,7 @@ function adjustForm(p) {
   openModal(`Ajustar existencias · ${p.name}`, [
     { type: "info", html: `Existencia actual: ${p.stocks.map((s) => `${esc(s.warehouse)} <strong>${s.qty}</strong>`).join(" · ")} (${esc(p.base_unit)})` },
     { name: "warehouse_id", label: "Bodega", type: "select", options: p.stocks.map((s) => ({ value: s.warehouse_id, label: s.warehouse })), full: true },
-    { name: "qty", label: `Cantidad en ${p.base_unit} (positiva entra, negativa sale)`, type: "number", step: "0.01", required: true, full: true },
+    { name: "qty", label: `Cantidad en ${p.base_unit} (positiva entra, negativa sale)`, type: "number", step: "0.0001", required: true, full: true },
     { name: "concept", label: "Motivo (conteo físico, merma, entrada inicial…)", required: true, full: true },
   ], async (b) => {
     if (!num(b.qty)) throw new Error("La cantidad no puede ser cero");
@@ -1348,7 +1354,7 @@ async function renderWarehouses(root) {
     { name: "product_id", label: "Producto", type: "select", options: products.map((p) => ({ value: p.id, label: `${p.sku} · ${p.name} (${p.stock} ${p.base_unit})` })), full: true },
     { name: "from_warehouse_id", label: "Desde", type: "select", options: rows.map((w) => ({ value: w.id, label: w.name })) },
     { name: "to_warehouse_id", label: "Hacia", type: "select", options: rows.map((w, i) => ({ value: w.id, label: w.name })), value: rows[1]?.id },
-    { name: "qty", label: "Cantidad (unidad base)", type: "number", step: "0.01", min: "0.01", required: true, full: true },
+    { name: "qty", label: "Cantidad (unidad base)", type: "number", step: "0.0001", min: "0.0001", required: true, full: true },
   ], async (b) => { await api("/api/stock/transfer", { method: "POST", body: { product_id: +b.product_id, from_warehouse_id: +b.from_warehouse_id, to_warehouse_id: +b.to_warehouse_id, qty: num(b.qty) } }); toast("Traslado realizado"); });
 }
 
@@ -1557,7 +1563,7 @@ async function renderCount(root, id) {
     <div class="card">${table(["SKU", "PRODUCTO", "SISTEMA", open ? "AHORA" : "", "CONTADO", "DIFERENCIA", ...(costs ? ["VALOR"] : [])].filter(Boolean), c.lines.map((l) => {
       const d = open ? diffOf(l, l.counted) : l.diff;
       return `<tr data-row="${l.id}" data-text="${esc(`${l.sku} ${l.name}`.toLowerCase())}"><td class="nowrap">${esc(l.sku)}</td><td>${esc(l.name)}</td><td class="nowrap">${l.expected} ${esc(l.unit)}</td>${open ? `<td class="nowrap">${l.current}</td>` : ""}
-        <td>${open ? `<input class="cnt-input" type="number" min="0" step="0.01" data-line="${l.id}" value="${l.counted ?? ""}" />` : (l.counted ?? "—")}</td>
+        <td>${open ? `<input class="cnt-input" type="number" min="0" step="0.0001" data-line="${l.id}" value="${l.counted ?? ""}" />` : (l.counted ?? "—")}</td>
         <td class="nowrap ${d < 0 ? "down" : d > 0 ? "up" : ""}" data-diff="${l.id}">${d === null ? "—" : (d > 0 ? "+" : "") + d}</td>
         ${costs ? `<td class="nowrap" data-val="${l.id}">${d === null || !l.cost ? "—" : money(r2(d * l.cost))}</td>` : ""}</tr>`;
     }))}</div>`;

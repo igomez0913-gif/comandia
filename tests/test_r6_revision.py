@@ -7,7 +7,7 @@ from datetime import timedelta
 import pytest
 
 from test_api import ids, stock
-from test_r1_recetas import make_item, set_recipe
+from test_r1_recetas import family, make_item, set_recipe
 from test_r2_salon import add, open_tab, pay_all, rest  # noqa: F401
 from test_r5_dividir import pay_guest, send, split, tab_of
 
@@ -454,3 +454,239 @@ def test_la_migracion_agranda_las_columnas_de_una_base_existente_y_se_puede_repe
         got = {(t, col): int(c.exec_driver_sql("SELECT NUMERIC_SCALE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s", (t, col)).scalar())
                for t, col, _d, _s in WIDEN_COLUMNS}
     assert got == {(t, col): sc for t, col, _d, sc in WIDEN_COLUMNS}
+
+
+# ───────────────────────── segunda revisión: lo que dejaron las correcciones ─────────────────────────
+def test_la_tolerancia_de_redondeo_solo_vale_al_cobrar_partes_no_en_traslados_ni_ventas_normales(client, auth, rest):  # noqa: F811
+    i = ids(client, auth)
+    wh1, wh2 = i["wh"]["id"], i["wh2"]["id"]
+    sal = make_item(client, auth, "INS-SAL2", "Sal", "insumo", rest["dep"], rest["burger"]["category_id"], cost=5, unit="lb")
+    # un traslado desde una bodega vacía nunca crea existencia de la nada
+    for _ in range(3):
+        r = client.post("/api/stock/transfer", json={"product_id": sal["id"], "from_warehouse_id": wh2, "to_warehouse_id": wh1, "qty": 0.001}, headers=auth)
+        assert r.status_code == 400
+    assert stock(client, auth, "INS-SAL2", wh1) == 0
+    # un platillo cuyo ingrediente se gasta en fracciones de milésima no se vende sin existencia
+    plato = make_item(client, auth, "PL-SAL2", "Plato con sal", "platillo", rest["dep"], rest["burger"]["category_id"], price=50, station="cocina")
+    assert set_recipe(client, auth, plato, [(sal, 0.0004)]).status_code == 200
+    t = open_tab(client, auth, rest, guests=1)
+    add(client, auth, t, plato, 1)
+    send(client, auth, t)
+    r = client.post(f"/api/tabs/{t['id']}/pay", json={"payments": pay_all(50)}, headers=auth)
+    assert r.status_code == 400 and "Stock insuficiente" in r.json()["detail"]
+    # y la preparación de un elaborado tampoco gasta lo que no hay
+    prep = make_item(client, auth, "ELA-SAL2", "Salmuera", "elaborado", rest["dep"], rest["burger"]["category_id"], cost=1, unit="lb")
+    assert set_recipe(client, auth, prep, [(sal, 0.0005)]).status_code == 200
+    assert client.post("/api/preparations", json={"product_id": prep["id"], "warehouse_id": wh1, "qty": 1}, headers=auth).status_code == 400
+
+
+def test_el_conteo_fisico_deja_la_existencia_exactamente_en_lo_contado(client, auth):
+    i = ids(client, auth)
+    wh = i["wh2"]["id"]
+    p = client.get("/api/products?q=CEM-050", headers=auth).json()[0]
+    for residuo, contado in ((0.0072, 0), (2.006, 2), (2.0043, 2), (29.4999, 30)):
+        actual = stock(client, auth, "CEM-050", wh)
+        assert client.post("/api/stock/adjust", json={"product_id": p["id"], "warehouse_id": wh, "qty": round(residuo - actual, 4), "concept": "Preparar conteo"}, headers=auth).status_code == 200
+        c = client.post("/api/counts", json={"warehouse_id": wh, "category_id": p["category_id"]}, headers=auth).json()
+        line = next(ln for ln in c["lines"] if ln["sku"] == "CEM-050")
+        assert client.put(f"/api/counts/{c['id']}/lines", json={"lines": [{"line_id": line["id"], "counted": contado}]}, headers=auth).status_code == 200
+        r = client.post(f"/api/counts/{c['id']}/apply", headers=auth)
+        assert r.status_code == 200, (residuo, contado, r.text)  # antes: «Stock insuficiente» con 0.0072 contado en 0
+        assert stock(client, auth, "CEM-050", wh) == contado, (residuo, contado)  # antes: 1.996, 2.0043, 29.9999
+
+
+def test_la_existencia_total_no_trae_cola_de_float(client, auth):
+    i = ids(client, auth)
+    dep, cat = family(client, auth)
+    sal = make_item(client, auth, "INS-SUMA", "Sal suma", "insumo", dep, cat, cost=5, unit="lb")
+    for wh, q in ((i["wh"]["id"], 0.1), (i["wh2"]["id"], 0.2)):
+        assert client.post("/api/stock/adjust", json={"product_id": sal["id"], "warehouse_id": wh, "qty": q, "concept": "Inicial"}, headers=auth).status_code == 200
+    assert client.get("/api/products?q=INS-SUMA", headers=auth).json()[0]["stock"] == 0.3
+    assert ",0.3," in client.get("/api/reports/inventario.csv", headers=auth).content.decode("utf-8-sig")
+
+
+# ───────────────────────── «Juntar» con el comensal de origen después de unir, pasar o bajar comensales ─────────────────────────
+def test_juntar_despues_de_unir_cuentas_devuelve_el_plato_a_su_comensal_en_la_cuenta_unida(client, auth, rest):  # noqa: F811
+    a = open_tab(client, auth, rest, "1", guests=2)
+    b = open_tab(client, auth, rest, "2", guests=3)
+    add(client, auth, b, rest["burger"], 1, guest=3)
+    lid = send(client, auth, b)["lines"][0]["id"]
+    split(client, auth, b, lid, [1, 2, 3])
+    assert client.post(f"/api/tabs/{a['id']}/merge", json={"from_tab_id": b["id"]}, headers=auth).status_code == 200
+    r = client.post(f"/api/tabs/{a['id']}/unsplit", json={}, headers=auth)
+    assert r.status_code == 200 and r.json()["guests_totals"] == {"5": 100.0}  # el comensal 3 de la cuenta B es el 5 de la unida
+
+
+def test_juntar_despues_de_pasar_a_una_cuenta_con_menos_comensales_no_deja_un_comensal_inexistente(client, auth, rest):  # noqa: F811
+    t = open_tab(client, auth, rest, "1", guests=3)
+    add(client, auth, t, rest["burger"], 1, guest=3)
+    lid = send(client, auth, t)["lines"][0]["id"]
+    split(client, auth, t, lid, [1, 2, 3])
+    ids_ = [ln["id"] for ln in tab_of(client, auth, t["id"])["lines"]]
+    r = client.post(f"/api/tabs/{t['id']}/transfer", json={"line_ids": ids_, "to_table_id": rest["mesas"]["3"]}, headers=auth)
+    assert r.status_code == 200
+    dest = r.json()["to"]
+    r2 = client.post(f"/api/tabs/{dest['id']}/unsplit", json={}, headers=auth)
+    assert r2.status_code == 200 and all(int(g) <= max(dest["guests"], 1) for g in r2.json()["guests_totals"])
+
+
+def test_juntar_despues_de_bajar_los_comensales_no_deja_un_comensal_inexistente(client, auth, rest):  # noqa: F811
+    t = open_tab(client, auth, rest, "1", guests=4)
+    add(client, auth, t, rest["burger"], 1, guest=4)
+    lid = send(client, auth, t)["lines"][0]["id"]
+    split(client, auth, t, lid, [1, 2])
+    assert client.put(f"/api/tabs/{t['id']}/guests", json={"guests": 2}, headers=auth).status_code == 200
+    r = client.post(f"/api/tabs/{t['id']}/unsplit", json={"line_id": lid}, headers=auth)
+    assert r.status_code == 200 and all(int(g) <= 2 for g in r.json()["guests_totals"])
+
+
+# ───────────────────────── cocina: lo más nuevo nunca se oculta ─────────────────────────
+def _comandas_directas(rest, n, estado="listo", cerradas=False):  # noqa: F811
+    from app.cocina import Comanda
+    from app.main import SessionLocal, now_local
+    from app.salon import Tab, TabLine
+    db = SessionLocal()
+    try:
+        for i in range(n):
+            tab = Tab(number=f"LX-{estado[:2]}{i:06d}", status="Cerrada" if cerradas else "Abierta", opened_at=now_local(), closed_at=now_local() - timedelta(minutes=30) if cerradas else None, waiter_name="x")
+            db.add(tab)
+            db.flush()
+            c = Comanda(number=f"CM-7{estado[:1]}{i:05d}", tab_id=tab.id, station="cocina", created_at=now_local() - timedelta(minutes=60))
+            db.add(c)
+            db.flush()
+            db.add(TabLine(tab_id=tab.id, product_id=rest["cola"]["id"], description="Refresco viejo", qty=1, unit_price=30, status="cobrada" if cerradas else "enviada", comanda_id=c.id,
+                           kds_status=estado, ready_at=now_local() - timedelta(minutes=50)))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_con_mas_de_300_comandas_pendientes_la_pantalla_conserva_las_nuevas(client, auth, rest):  # noqa: F811
+    _comandas_directas(rest, 305, "pendiente")
+    t = open_tab(client, auth, rest)
+    add(client, auth, t, rest["burger"], 1)
+    send(client, auth, t)
+    got = client.get("/api/kitchen", headers=auth).json()["comandas"]
+    assert len(got) == 300 and "Hamburguesa" in [ln["description"] for c in got for ln in c["lines"]]  # antes se quedaban las 300 más viejas
+    assert got[-1]["lines"][0]["description"] == "Hamburguesa"  # y las más nuevas van al final de la fila
+
+
+def test_con_mas_de_200_avisos_de_listo_el_mesero_ve_los_ultimos(client, auth, rest):  # noqa: F811
+    _comandas_directas(rest, 205, "listo", cerradas=True)
+    t = open_tab(client, auth, rest)
+    add(client, auth, t, rest["burger"], 1)
+    lid = send(client, auth, t)["lines"][0]["id"]
+    assert client.put(f"/api/kitchen/lines/{lid}/status", json={"status": "listo"}, headers=auth).status_code == 200
+    got = client.get("/api/kitchen/ready", headers=auth).json()
+    assert len(got) == 200 and lid in [r["line_id"] for r in got]
+
+
+def test_anular_las_partes_que_faltan_no_avisa_a_cocina_ni_la_oculta_si_alguien_ya_pago(client, auth, rest, monkeypatch):  # noqa: F811
+    import app.cocina as cocina
+    avisos = []
+    monkeypatch.setattr(cocina, "notify_void", lambda db, tab, line: avisos.append(line.id))
+    # (a) pagó una parte que NO es la original y se anula la original: el plato se sigue preparando para quien ya pagó
+    t, lid = mini_tab(client, auth, rest, rest["burger"], guests=2)
+    split(client, auth, t, lid, [1, 2])
+    pay_guest(client, auth, t, 2, 50)
+    assert client.post(f"/api/tabs/{t['id']}/lines/{lid}/void", json={"reason": "Se fue sin pagar"}, headers=auth).status_code == 200
+    got = client.get("/api/kitchen", headers=auth).json()["comandas"]
+    assert [ln["description"] for c in got for ln in c["lines"] if not ln["voided"]] == ["Hamburguesa"] and avisos == []
+    # (b) pagó la original y se anula la otra parte: tampoco se avisa «anulado» y el plato sigue
+    t2, l2 = mini_tab(client, auth, rest, rest["burger"], guests=2, mesa="2")
+    split(client, auth, t2, l2, [1, 2])
+    pay_guest(client, auth, t2, 1, 50)
+    other = next(ln for ln in tab_of(client, auth, t2["id"])["lines"] if ln["status"] == "enviada")
+    assert client.post(f"/api/tabs/{t2['id']}/lines/{other['id']}/void", json={"reason": "Se fueron sin pagar"}, headers=auth).status_code == 200
+    assert avisos == [] and len(client.get("/api/kitchen", headers=auth).json()["comandas"]) == 2
+    # (c) si nadie pagó, el plato se cancela entero y la estación sí se entera
+    t3, l3 = mini_tab(client, auth, rest, rest["burger"], guests=2, mesa="3")
+    split(client, auth, t3, l3, [1, 2])
+    assert client.post(f"/api/tabs/{t3['id']}/lines/{l3}/void", json={"reason": "Error de pedido"}, headers=auth).status_code == 200
+    assert avisos == [l3]
+
+
+def test_la_comanda_de_una_transferencia_parcial_conserva_el_error_de_impresion_y_el_orden(client, auth, rest):  # noqa: F811
+    from app.cocina import Comanda
+    from app.main import SessionLocal
+    a = open_tab(client, auth, rest, "1")
+    add(client, auth, a, rest["burger"], 1)
+    add(client, auth, a, rest["burger"], 1)
+    s = send(client, auth, a)
+    from app.main import now_local
+    db = SessionLocal()
+    db.query(Comanda).update({"print_error": "No se pudo imprimir en 192.168.1.50", "created_at": now_local() - timedelta(minutes=20)})  # la comanda de la cuenta 1 salió hace 20 min
+    db.commit()
+    b = open_tab(client, auth, rest, "2")
+    add(client, auth, b, rest["cola"], 1)
+    send(client, auth, b)
+    db.query(Comanda).filter(Comanda.tab_id == b["id"]).update({"created_at": now_local() - timedelta(minutes=5)})  # y la de la cuenta 2 hace 5 (con segundos exactos para que MariaDB no empate)
+    db.commit()
+    db.close()
+    assert client.post(f"/api/tabs/{a['id']}/transfer", json={"line_ids": [s["lines"][0]["id"]], "to_table_id": rest["mesas"]["3"]}, headers=auth).status_code == 200
+    got = client.get("/api/kitchen", headers=auth).json()["comandas"]
+    movida = next(c for c in got if c["tables"] == "3")
+    assert movida["print_error"].startswith("No se pudo imprimir")  # sigue ofreciendo «Reimprimir»
+    assert [c["tables"] for c in got] == ["1", "3", "2"]  # por hora de pedido: la movida conserva su lugar, no pasa al final
+
+
+# ───────────────────────── concurrencia y respaldo (solo MySQL/MariaDB) ─────────────────────────
+@pytest.mark.skipif(not _es_mysql(), reason="SQLite no bloquea filas")
+def test_transferir_a_una_mesa_cuya_cuenta_se_cobra_a_la_vez_no_deja_consumos_en_una_cuenta_cerrada(client, auth, rest, monkeypatch):  # noqa: F811
+    import time
+
+    import app.salon as salon
+    a, b = open_tab(client, auth, rest, "1"), open_tab(client, auth, rest, "2")
+    add(client, auth, a, rest["cola"], 1)
+    add(client, auth, b, rest["burger"], 1)
+    refresco = send(client, auth, a)["lines"][0]["id"]
+    send(client, auth, b)
+    real = salon._pos_sale
+    started = threading.Event()
+
+    def slow_sale(*args, **kw):
+        started.set()
+        time.sleep(1.0)  # la caja tarda cobrando la cuenta B mientras el mesero pasa un consumo a su mesa
+        return real(*args, **kw)
+
+    monkeypatch.setattr(salon, "_pos_sale", slow_sale)
+    out = {}
+
+    def cobrar():
+        out["pay"] = client.post(f"/api/tabs/{b['id']}/pay", json={"payments": pay_all(100)}, headers=auth).status_code
+
+    def pasar():
+        started.wait(5)
+        time.sleep(0.3)
+        out["transfer"] = client.post(f"/api/tabs/{a['id']}/transfer", json={"line_ids": [refresco], "to_table_id": rest["mesas"]["2"]}, headers=auth).status_code
+
+    threads = [threading.Thread(target=cobrar), threading.Thread(target=pasar)]
+    [th.start() for th in threads]
+    [th.join() for th in threads]
+    assert out["pay"] == 200 and out["transfer"] == 400  # antes: 200 y el refresco quedaba «enviado» en una cuenta cerrada
+    assert [ln["status"] for ln in tab_of(client, auth, a["id"])["lines"]] == ["enviada"] and tab_of(client, auth, b["id"])["status"] == "Cerrada"
+
+
+@pytest.mark.skipif(not _es_mysql(), reason="el aislamiento solo importa en MySQL/MariaDB")
+def test_el_respaldo_json_lee_todas_las_tablas_de_una_misma_foto(client, auth, rest):  # noqa: F811
+    """El motor trabaja en READ COMMITTED, pero el respaldo propio (sin mysqldump) tiene que leer todas las tablas con REPEATABLE READ: una sola foto aunque se esté vendiendo."""
+    import tempfile
+
+    from sqlalchemy import event
+
+    from app import respaldos
+    from app.main import Base, engine
+    niveles = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _spy(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        if statement.lstrip().upper().startswith("SELECT") and "FROM" in statement.upper():
+            niveles.append(conn.get_isolation_level())
+
+    try:
+        respaldos.dump_json(engine, Base.metadata, tempfile.mktemp(suffix=".json.gz"))
+    finally:
+        event.remove(engine, "before_cursor_execute", _spy)
+    assert niveles and set(niveles) == {"REPEATABLE READ"}, set(niveles)
+    with engine.connect() as c:  # y el resto del sistema sigue en READ COMMITTED
+        assert c.get_isolation_level() == "READ COMMITTED"

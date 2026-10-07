@@ -343,6 +343,87 @@ def test_una_respuesta_vieja_no_pisa_la_mesa_que_el_mesero_acaba_de_tocar(server
     assert pg.errors == []
 
 
+def test_la_nota_de_credito_de_una_factura_del_salon_se_precarga_y_el_total_no_suma_isv_de_mas(server, browser):
+    pg = _page(browser)
+    _login(pg, server)
+    doc_id = pg.evaluate("""async () => {
+      const prods = await api('/api/products'); const cola = prods.find((p) => p.name === 'Refresco');
+      const t = await api('/api/tabs', { method: 'POST', body: { table_ids: [], guests: 1 } });
+      await api(`/api/tabs/${t.id}/lines`, { method: 'POST', body: { product_id: cola.id, qty: 1 } });
+      await api(`/api/tabs/${t.id}/send`, { method: 'POST' });
+      const r = await api(`/api/tabs/${t.id}/pay`, { method: 'POST', body: { payments: [{ method: 'Efectivo', amount: 35 }] } });
+      return r.document.id;
+    }""")
+    pg.evaluate("(id) => showDoc(id)", doc_id)
+    pg.wait_for_selector('[data-a="credit"]')
+    pg.click('[data-a="credit"]')
+    pg.wait_for_selector("[data-qty]")  # antes el editor abría sin líneas: las facturas del salón no traen presentación
+    assert pg.input_value("[data-qty]") == "1"
+    pg.wait_for_selector("#totals-box")
+    box = pg.inner_text("#totals-box").replace("\u00a0", " ")
+    assert "35.00" in box and "40.25" not in box  # los precios ya incluyen el ISV: no se suma otra vez
+    assert pg.errors == []
+
+
+def test_el_inventario_acepta_cuatro_decimales_en_ajustes(server, browser):
+    pg = _page(browser)
+    _login(pg, server)
+    pg.click('[data-view="inventario"]')
+    pg.wait_for_selector("table")
+    step = pg.evaluate("""async () => {
+      const prods = await api('/api/products'); const p = prods.find((x) => x.name === 'Refresco');
+      adjustForm(p);
+      await new Promise((r) => setTimeout(r, 300));
+      return document.querySelector('#modal-form input[name=qty]').step;
+    }""")
+    assert step == "0.0001"  # la existencia tiene 4 decimales: con 0.01 no se podía dejar exacta ni vaciar un residuo
+    assert pg.errors == []
+
+
+def test_el_contador_menos_avisa_cuando_cierra_la_cuenta(server, browser):
+    pg = _page(browser)
+    _login(pg, server)
+    pg.click('[data-view="salon"]')
+    pg.wait_for_selector(".fi.mesa")
+    # cuenta sin mesa de dos comensales: el 1 pidió, recibió y pagó su refresco; el 2 acaba de pedir otro y todavía no se envía
+    pg.evaluate("""async () => {
+      const prods = await api('/api/products'); const cola = prods.find((p) => p.name === 'Refresco');
+      const t = await api('/api/tabs', { method: 'POST', body: { table_ids: [], guests: 2, name: 'Prueba menos' } });
+      await api(`/api/tabs/${t.id}/lines`, { method: 'POST', body: { product_id: cola.id, qty: 1, guest: 1 } });
+      await api(`/api/tabs/${t.id}/send`, { method: 'POST' });
+      await api(`/api/tabs/${t.id}/lines`, { method: 'POST', body: { product_id: cola.id, qty: 1, guest: 2 } });
+      await api(`/api/tabs/${t.id}/pay`, { method: 'POST', body: { guest: 1, payments: [{ method: 'Efectivo', amount: 35 }] } });
+      await refreshSalon();
+    }""")
+    pg.click('.tab-chip.alt:has-text("Prueba menos")')
+    pg.wait_for_selector('.tline.nueva:has-text("Refresco")')
+    pg.click('.tline.nueva [data-q][data-d="-1"]')  # lo último que quedaba pendiente: la cuenta se cierra y el mesero lo ve
+    pg.wait_for_selector("#toasts .toast:has-text('se cerró')")
+    pg.wait_for_selector('.tab-chip.alt:has-text("Prueba menos")', state="detached")  # la cuenta cerrada sale de la lista
+    assert pg.errors == []
+
+
+def test_tocar_dos_cuentas_seguidas_con_red_lenta_deja_la_ultima(server, browser):
+    pg = _page(browser)
+    _login(pg, server)
+    pg.click('[data-view="salon"]')
+    pg.wait_for_selector(".fi.mesa")
+    ids = pg.evaluate("""async () => {
+      const a = await api('/api/tabs', { method: 'POST', body: { table_ids: [], guests: 1, name: 'Cuenta lenta' } });
+      const b = await api('/api/tabs', { method: 'POST', body: { table_ids: [], guests: 1, name: 'Cuenta rapida' } });
+      await refreshSalon();
+      return [a.id, b.id];
+    }""")
+    pg.evaluate("(A) => { const f = window.fetch; window.fetch = (u, o) => (String(u).endsWith('/api/tabs/' + A) && !(o && o.method) ? new Promise((r) => setTimeout(r, 900)).then(() => f(u, o)) : f(u, o)); }", ids[0])
+    pg.click('.tab-chip.alt:has-text("Cuenta lenta")')
+    pg.wait_for_timeout(200)
+    pg.click('.tab-chip.alt:has-text("Cuenta rapida")')
+    pg.wait_for_selector('.tab-head:has-text("Cuenta rapida")')
+    pg.wait_for_timeout(1500)  # llega la respuesta de la primera
+    assert "Cuenta rapida" in pg.inner_text(".tab-head")  # antes el panel volvía a la cuenta que se tocó primero
+    assert pg.errors == []
+
+
 def test_disenar_el_plano_arrastrar_y_guardar(server, browser):
     pg = _page(browser)
     _login(pg, server)

@@ -12,7 +12,7 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, U
 from sqlalchemy.orm import Session, relationship
 
 from app.main import (
-    PAY_METHODS, Base, Client, Descriptive, PosPaymentIn, PosSaleIn, ItemIn, Presentation, Product, SELLABLE_KINDS, User, Warehouse, _pos_sale, app, audit,
+    PAY_METHODS, STOCK_SLACK, STOCK_TOLERANCE, Base, Client, Descriptive, PosPaymentIn, PosSaleIn, ItemIn, Presentation, Product, SELLABLE_KINDS, User, Warehouse, _pos_sale, app, audit,
     authorize_with_pin, current_user, get_db, has_perm, money, next_seq_number, now_local, require, resolve_line, price_for_level,
 )
 
@@ -535,9 +535,15 @@ def void_line(tid: int, lid: int, body: VoidIn, db: Session = Depends(get_db), u
     if not has_perm(user, "anular"):
         who = authorize_with_pin(db, user, body.auth_pin, "anular", "Anular un producto ya enviado a cocina necesita el PIN de un supervisor")
     when = now_local()
+    paid_parts = [p for p in parts if p.status == "cobrada"]
+    carrier = next((p for p in live if p.comanda_id), None)  # la parte que lleva la comanda (la original)
+    if carrier is not None and paid_parts:  # alguien ya pagó su parte: el plato sigue su camino en cocina a nombre de una parte cobrada y no se avisa «anulado»
+        heir = paid_parts[0]
+        heir.comanda_id, heir.kds_status, heir.ready_at, heir.served_at = carrier.comanda_id, carrier.kds_status, carrier.ready_at, carrier.served_at
+        carrier.comanda_id = None
     for p in live:
         p.status, p.voided_at, p.voided_by, p.void_reason = "anulada", when, who.name, reason
-    paid = sum(1 for p in parts if p.status == "cobrada")
+    paid = len(paid_parts)
     audit(db, user, "Anuló producto de la cuenta", f"{t.number} · {float(ln.qty):g} × {ln.description} · {reason}" + (f" · dividido en {len(parts)} partes" if len(parts) > 1 else "")
           + (f" · {paid} parte(s) ya cobrada(s) se conservan" if paid else "") + (f" · autorizó {who.name}" if who.id != user.id else ""), "cuenta", t.id)
     _close_if_settled(db, user, t)
@@ -545,7 +551,7 @@ def void_line(tid: int, lid: int, body: VoidIn, db: Session = Depends(get_db), u
     from app import cocina
     for p in live:
         if p.comanda_id:
-            cocina.notify_void(db, t, p)  # avisa a la estación para que no lo prepare (o lo deje de preparar)
+            cocina.notify_void(db, t, p)  # avisa a la estación para que no lo prepare (o lo deje de preparar): solo si el plato se cancela entero
     return _tab_out(db, t)
 
 
@@ -751,8 +757,8 @@ def unsplit(tid: int, body: UnsplitIn, db: Session = Depends(get_db), user: User
         for p in parts:
             if p is not head:
                 t.lines.remove(p)
-        if head.orig_guest:
-            head.guest = head.orig_guest  # el plato vuelve con quien lo pidió, no con el comensal de su primera parte
+        if head.orig_guest and head.orig_guest <= max(t.guests, 1):
+            head.guest = head.orig_guest  # el plato vuelve con quien lo pidió (si ese comensal sigue existiendo), no con el comensal de su primera parte
         head.share, head.group_id, head.orig_guest = None, None, None
         names.append(head.description)
         done += 1
@@ -808,6 +814,8 @@ def merge_tabs(tid: int, body: MergeIn, db: Session = Depends(get_db), user: Use
     for ln in list(src.lines):
         src.lines.remove(ln)
         ln.guest += offset
+        if ln.orig_guest:
+            ln.orig_guest += offset  # el comensal original se numera igual que el actual
         t.lines.append(ln)
     t.guests = offset + max(src.guests, 1)
     src.tables.clear()
@@ -835,7 +843,8 @@ def transfer_lines(tid: int, body: TransferIn, db: Session = Depends(get_db), us
     if body.to_table_id:
         found = open_tab_of_table(db, body.to_table_id)
         dest_id = found.id if found else None
-    locked = {x.id: x for x in db.query(Tab).filter(Tab.id.in_({tid, dest_id} - {None})).order_by(Tab.id).with_for_update().all()}  # origen y destino, siempre en el mismo orden
+    # populate_existing: la cuenta de esa mesa ya se leyó sin bloqueo; si otra caja la cobró o la unió mientras se esperaba, hay que ver su estado actual y no el de antes
+    locked = {x.id: x for x in db.query(Tab).filter(Tab.id.in_({tid, dest_id} - {None})).order_by(Tab.id).with_for_update().populate_existing().all()}  # origen y destino, siempre en el mismo orden
     t = locked.get(tid)
     if not t:
         raise HTTPException(404, "Cuenta no encontrada")
@@ -866,6 +875,8 @@ def transfer_lines(tid: int, body: TransferIn, db: Session = Depends(get_db), us
     for ln in lines:
         t.lines.remove(ln)
         ln.guest = min(ln.guest, max(dest.guests, 1))
+        if ln.orig_guest:
+            ln.orig_guest = min(ln.orig_guest, max(dest.guests, 1))
         dest.lines.append(ln)
     db.flush()
     audit(db, user, "Transfirió consumos", f"{t.number} → {dest.number} · {len(lines)} línea(s) · " + ", ".join(ln.description for ln in lines)[:300], "cuenta", t.id)
@@ -888,7 +899,7 @@ def _follow_comandas(db: Session, lines: list, dest: Tab):
         if not staying:
             c.tab_id = dest.id
             continue
-        new = Comanda(number=next_seq_number(db, Comanda, Comanda.number, "CM-", 6), tab_id=dest.id, station=c.station, created_at=c.created_at, printed_at=c.printed_at)
+        new = Comanda(number=next_seq_number(db, Comanda, Comanda.number, "CM-", 6), tab_id=dest.id, station=c.station, created_at=c.created_at, printed_at=c.printed_at, print_error=c.print_error or "")
         db.add(new)
         db.flush()
         for ln in moved:
@@ -954,7 +965,12 @@ def pay_tab(tid: int, body: PayIn, db: Session = Depends(get_db), user: User = D
     sale = PosSaleIn(client_id=client_id, warehouse_id=t.warehouse_id or _default_warehouse(db, None), series_id=body.series_id, oce_number=body.oce_number,
                      buyer_name=body.buyer_name, buyer_rtn=body.buyer_rtn, payments=body.payments, received=body.received,
                      items=[ItemIn(product_id=ln.product_id, qty=eff_qty(ln), price=float(ln.unit_price)) for ln in chosen])
-    doc = _pos_sale(sale, db, user, commit=False, trusted_prices=True)
+    slack = STOCK_SLACK.set(STOCK_TOLERANCE) if any(ln.share is not None for ln in chosen) else None  # cobrar partes redondea la existencia: la última no debe fallar por milésimas
+    try:
+        doc = _pos_sale(sale, db, user, commit=False, trusted_prices=True)
+    finally:
+        if slack is not None:
+            STOCK_SLACK.reset(slack)
     for ln in chosen:
         ln.status, ln.document_id = "cobrada", doc["id"]
     db.add(TabSettlement(tab_id=t.id, document_id=doc["id"], tip=Decimal(str(round(body.tip, 2))), tip_method=body.tip_method, lines=len(chosen),

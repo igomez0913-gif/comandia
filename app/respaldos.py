@@ -86,7 +86,8 @@ def _plain(value):
 def dump_json(engine, metadata, target: str):
     """Respaldo propio: todas las tablas de Comandia en un JSON comprimido."""
     data = {"comandia_backup": 1, "created": datetime.now().isoformat(timespec="seconds"), "tables": {}}
-    with engine.connect() as conn:
+    conn_opts = {} if engine.url.get_backend_name() == "sqlite" else {"isolation_level": "REPEATABLE READ"}  # una sola foto de todas las tablas aunque se esté vendiendo (el motor trabaja en READ COMMITTED)
+    with engine.connect().execution_options(**conn_opts) as conn:
         for table in metadata.sorted_tables:
             rows = conn.execute(table.select().order_by(*table.primary_key.columns)).mappings().all()
             data["tables"][table.name] = [{k: _plain(v) for k, v in row.items()} for row in rows]

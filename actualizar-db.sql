@@ -432,6 +432,9 @@ DELIMITER ;
 CALL comandia_widen_column('document_items', 'qty', 'DECIMAL(16,8) NULL', 8);
 CALL comandia_widen_column('stocks', 'qty', 'DECIMAL(14,4) NULL', 4);
 CALL comandia_widen_column('stock_moves', 'qty', 'DECIMAL(14,4) NULL', 4);
+CALL comandia_widen_column('inventory_count_lines', 'expected', 'DECIMAL(14,4) NULL', 4);
+CALL comandia_widen_column('inventory_count_lines', 'counted', 'DECIMAL(14,4) NULL', 4);
+CALL comandia_widen_column('inventory_count_lines', 'applied_diff', 'DECIMAL(14,4) NULL', 4);
 DROP PROCEDURE IF EXISTS comandia_widen_column;
 
 -- Índices por fecha (listados y reportes más rápidos con muchos documentos). Se crean solo si faltan.

@@ -241,7 +241,8 @@ def kitchen(station: str = "", db: Session = Depends(get_db), user: User = Depen
          .filter(Comanda.lines.any(and_(TabLine.status != "anulada", TabLine.kds_status != "servido"))))  # algo por preparar o por llevar
     if station:
         q = q.filter(Comanda.station == station.strip().lower())
-    return {"station": station, "comandas": [_comanda_out(c) for c in q.order_by(Comanda.id).limit(300).all()]}
+    rows = q.order_by(Comanda.created_at.desc(), Comanda.id.desc()).limit(300).all()  # si hubiera más de 300, se recortan las más viejas (que ya llevan horas), nunca los pedidos nuevos
+    return {"station": station, "comandas": [_comanda_out(c) for c in reversed(rows)]}  # y se muestran las más viejas primero
 
 
 class LineStatusIn(BaseModel):
@@ -303,7 +304,7 @@ def ready_for_pickup(db: Session = Depends(get_db), user: User = Depends(require
         q = q.filter(Tab.waiter_id == user.id)
     return [{"line_id": ln.id, "description": ln.description, "qty": float(ln.qty), "station": c.station, "tab_id": t.id, "tab_number": t.number,
              "tables": ", ".join(x.table.name for x in t.tables if x.table), "ready_at": ln.ready_at.isoformat() if ln.ready_at else None}
-            for ln, c, t in q.order_by(TabLine.ready_at).limit(200).all()]
+            for ln, c, t in reversed(q.order_by(TabLine.ready_at.desc()).limit(200).all())]  # al recortar se pierden los avisos más viejos, no los últimos
 
 
 @app.get("/api/comandas")

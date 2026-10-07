@@ -1,4 +1,5 @@
 """Comandia — gestión para restaurantes, cafés y bares: salón, cuentas, comandas, cocina, caja y facturación SAR Honduras."""
+import contextvars
 import csv
 import hashlib
 import math
@@ -643,9 +644,9 @@ class InventoryCountLine(Base):
     id = Column(Integer, primary_key=True)
     count_id = Column(Integer, ForeignKey("inventory_counts.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    expected = Column(Numeric(12, 2), default=0)  # existencia del sistema al abrir el conteo
-    counted = Column(Numeric(12, 2), nullable=True)  # vacío = todavía no se cuenta
-    applied_diff = Column(Numeric(12, 2), nullable=True)  # ajuste hecho al aplicar
+    expected = Column(Numeric(14, 4), default=0)  # existencia del sistema al abrir el conteo (4 decimales, como la existencia)
+    counted = Column(Numeric(14, 4), nullable=True)  # vacío = todavía no se cuenta
+    applied_diff = Column(Numeric(14, 4), nullable=True)  # ajuste hecho al aplicar
     cost = Column(Numeric(12, 2), default=0)  # costo unitario al aplicar (para valorizar la diferencia)
     product = relationship("Product")
 
@@ -1088,16 +1089,17 @@ def stock_of(db: Session, product_id: int, warehouse_id: int, lock: bool = False
 
 STOCK_DECIMALS = 4
 STOCK_TOLERANCE = 0.001  # lo que puede faltar por redondeo al cobrar un plato compartido parte por parte (hasta 20 partes × media diezmilésima cada una)
+# Cuánto puede faltar para que todavía se acepte un descuento. Es estricto (una diezmilésima) salvo mientras se cobran partes de un plato compartido (salon.pay_tab lo amplía a
+# STOCK_TOLERANCE): ahí cada parte redondea la existencia y la última no debe fallar por unas milésimas. Traslados, ajustes, preparaciones y ventas normales nunca lo ven ampliado.
+STOCK_SLACK: contextvars.ContextVar = contextvars.ContextVar("stock_slack", default=0.0001)
 
 
 def adjust_stock(db: Session, product_id: int, warehouse_id: int, qty_base: float, concept: str, allow_negative: bool = False):
     row = stock_of(db, product_id, warehouse_id, lock=True)  # bloquea la fila: dos cajas vendiendo lo mismo no pisan la existencia
     new_qty = float(row.qty) + qty_base
-    if new_qty < -STOCK_TOLERANCE and not allow_negative:
+    if new_qty < -STOCK_SLACK.get() and not allow_negative:
         prod = db.get(Product, product_id)
         raise HTTPException(400, f"Stock insuficiente de {prod.name if prod else product_id} en la bodega seleccionada")
-    if new_qty < 0 and not allow_negative:
-        new_qty = 0.0  # una diferencia de redondeo no deja la existencia en negativo
     row.qty = Decimal(str(round(new_qty, STOCK_DECIMALS)))
     db.add(StockMove(product_id=product_id, warehouse_id=warehouse_id, qty=Decimal(str(round(qty_base, STOCK_DECIMALS))), concept=concept, created_at=now_local()))
 
@@ -1704,6 +1706,9 @@ WIDEN_COLUMNS = [
     ("document_items", "qty", "DECIMAL(16,8) NULL", 8),  # la parte de un plato compartido se factura con su fracción exacta
     ("stocks", "qty", "DECIMAL(14,4) NULL", 4),  # los ingredientes de una receta se gastan en milésimas
     ("stock_moves", "qty", "DECIMAL(14,4) NULL", 4),
+    ("inventory_count_lines", "expected", "DECIMAL(14,4) NULL", 4),  # el conteo físico trabaja con la misma precisión que la existencia
+    ("inventory_count_lines", "counted", "DECIMAL(14,4) NULL", 4),
+    ("inventory_count_lines", "applied_diff", "DECIMAL(14,4) NULL", 4),
 ]
 
 
@@ -1711,12 +1716,15 @@ def widen_columns(eng):
     """Agranda los decimales de las columnas de WIDEN_COLUMNS en MySQL/MariaDB (SQLite no limita los decimales). No toca lo que ya está ancho."""
     if eng.url.get_backend_name() == "sqlite":
         return
-    with eng.begin() as conn:
-        for table, name, ddl, scale in WIDEN_COLUMNS:
-            row = conn.exec_driver_sql(
-                "SELECT NUMERIC_SCALE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s", (table, name)).fetchone()
-            if row is not None and row[0] is not None and int(row[0]) < scale:
-                conn.exec_driver_sql(f"ALTER TABLE `{table}` MODIFY COLUMN `{name}` {ddl}")
+    for table, name, ddl, scale in WIDEN_COLUMNS:
+        try:
+            with eng.begin() as conn:
+                row = conn.exec_driver_sql(
+                    "SELECT NUMERIC_SCALE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s", (table, name)).fetchone()
+                if row is not None and row[0] is not None and int(row[0]) < scale:
+                    conn.exec_driver_sql(f"ALTER TABLE `{table}` MODIFY COLUMN `{name}` {ddl}")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("No se pudo agrandar %s.%s (¿el usuario de MySQL no tiene permiso ALTER?): %s. Ejecuta actualizar-db.sql con un usuario administrador.", table, name, exc)
 
 
 # Índices que aceleran los listados y reportes por fecha cuando hay muchos documentos (los de llaves foráneas y los únicos ya los crea MySQL).
@@ -2551,7 +2559,7 @@ def count_out(db: Session, c: InventoryCount, user: User, detail: bool = False) 
         current = money(stock_of(db, ln.product_id, c.warehouse_id).qty) if c.status == "Abierto" else None
         if ln.counted is not None:
             counted_n += 1
-        diff = money(ln.applied_diff) if ln.applied_diff is not None else (round(money(ln.counted) - current, 2) if ln.counted is not None and current is not None else None)
+        diff = money(ln.applied_diff) if ln.applied_diff is not None else (round(money(ln.counted) - current, STOCK_DECIMALS) if ln.counted is not None and current is not None else None)
         unit_cost = money(ln.cost) if c.status == "Aplicado" else money(ln.product.cost)
         value = round(diff * unit_cost, 2) if diff is not None else None
         if value:
@@ -2624,7 +2632,7 @@ def save_count_lines(cid: int, body: CountLinesIn, db: Session = Depends(get_db)
         ln = by_id.get(item.line_id)
         if not ln:
             raise HTTPException(400, "Línea de conteo no válida")
-        ln.counted = None if item.counted is None else round(item.counted, 2)
+        ln.counted = None if item.counted is None else round(item.counted, STOCK_DECIMALS)
     db.commit()
     return count_out(db, c, user, detail=True)
 
@@ -2642,9 +2650,9 @@ def apply_count(cid: int, db: Session = Depends(get_db), user: User = Depends(re
     changed = 0
     for ln in counted:
         current = money(stock_of(db, ln.product_id, c.warehouse_id).qty)
-        diff = round(money(ln.counted) - current, 2)
+        diff = round(money(ln.counted) - current, STOCK_DECIMALS)  # la existencia queda exactamente en lo contado, aunque tenga residuos de milésimas
         ln.applied_diff, ln.cost = diff, ln.product.cost or 0
-        if abs(diff) > 0.0001:
+        if abs(diff) > 0.00005:
             adjust_stock(db, ln.product_id, c.warehouse_id, diff, f"Conteo físico {c.number}")
             changed += 1
             value = diff * money(ln.product.cost)
@@ -2701,7 +2709,7 @@ def stock_moves(product_id: Optional[int] = None, warehouse_id: Optional[int] = 
 # ───────────────────────── Productos ─────────────────────────
 def product_out(db: Session, p: Product, costs: bool = True) -> dict:
     stocks = db.query(Stock).filter(Stock.product_id == p.id).all()
-    total = sum(money(s.qty) for s in stocks)
+    total = round(sum(money(s.qty) for s in stocks), STOCK_DECIMALS)
     return {
         "id": p.id, "sku": p.sku, "name": p.name,
         "department_id": p.department_id, "department": p.department.name if p.department else "",
@@ -4915,7 +4923,7 @@ def inventario_csv(db: Session = Depends(get_db), user: User = Depends(require("
     rows = []
     for p in db.query(Product).order_by(Product.name).all():
         per = [stock.get((p.id, w.id), 0) for w in whs]
-        total = sum(per)
+        total = round(sum(per), STOCK_DECIMALS)
         rows.append([p.sku, p.name, p.department.name if p.department else "", p.category.name if p.category else "", p.base_unit, f"{money(p.cost):.2f}",
                      *[f"{price_for_level(p, n):.2f}" for n in PRICE_LEVELS], *per, total, f"{total * money(p.cost):.2f}"])
     names = price_names(db.query(Company).first())

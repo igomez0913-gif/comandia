@@ -218,7 +218,7 @@ function bindSalon() {
   $$("[data-dep]", root).forEach((b) => b.onclick = () => { SALON.depId = b.dataset.dep; keepMenuOpen(); });
   if ($("#menu-q")) { $("#menu-q").oninput = (e) => { SALON.q = e.target.value; const g = $(".menu-grid"); const keep = e.target.selectionStart; keepMenuOpen(true); const i = $("#menu-q"); if (i) { i.focus(); i.setSelectionRange(keep, keep); } }; }
   $$("[data-add]", root).forEach((b) => b.onclick = () => addProduct(+b.dataset.add));
-  $$("[data-q]", root).forEach((b) => b.onclick = () => { const ln = t.lines.find((l) => l.id === +b.dataset.q); const qty = Math.max(0, ln.qty + +b.dataset.d); salonAct(() => qty === 0 ? api(`/api/tabs/${t.id}/lines/${ln.id}/void`, { method: "POST", body: {} }) : api(`/api/tabs/${t.id}/lines/${ln.id}`, { method: "PUT", body: { qty } })); });
+  $$("[data-q]", root).forEach((b) => b.onclick = () => { const ln = t.lines.find((l) => l.id === +b.dataset.q); const qty = Math.max(0, ln.qty + +b.dataset.d); salonAct(async () => { if (qty > 0) return api(`/api/tabs/${t.id}/lines/${ln.id}`, { method: "PUT", body: { qty } }); const r = await api(`/api/tabs/${t.id}/lines/${ln.id}/void`, { method: "POST", body: {} }); closedNote(r); return r; }); });
   $$("[data-del]", root).forEach((b) => b.onclick = () => salonAct(async () => { const r = await api(`/api/tabs/${t.id}/lines/${b.dataset.del}/void`, { method: "POST", body: {} }); closedNote(r); return r; }));
   $$("[data-note]", root).forEach((b) => b.onclick = () => noteModal(t.lines.find((l) => l.id === +b.dataset.note)));
   $$("[data-guest]", root).forEach((sel) => sel.onchange = () => salonAct(() => api(`/api/tabs/${t.id}/guest`, { method: "POST", body: { line_ids: [+sel.dataset.guest], guest: +sel.value } })));
@@ -243,7 +243,8 @@ async function tapTable(id) {
   openTabModal(item);
 }
 async function selectTab(id) {
-  try { SALON.tab = await api("/api/tabs/" + id); paintSalon(); } catch (err) { toast(err.message, "err"); }
+  const seq = (SALON.selSeq = (SALON.selSeq || 0) + 1);  // si el mesero toca otra mesa antes de que llegue la respuesta, gana la última que tocó
+  try { const tab = await api("/api/tabs/" + id); if (seq !== SALON.selSeq) return; SALON.tab = tab; paintSalon(); } catch (err) { toast(err.message, "err"); }
 }
 
 function openTabModal(table) {
@@ -296,7 +297,8 @@ async function sendOrder() {
     const failed = r.comandas.filter((c) => c.print_error);
     toast(`Enviado a ${r.comandas.map((c) => c.station).join(" y ")}`);
     if (failed.length) alertPopup(`La comanda de ${failed.map((c) => c.station.toUpperCase()).join(" y ")} no salió impresa (${failed[0].print_error}). Ya está en la pantalla de cocina; avisa a gerencia.`, "Impresora sin respuesta");
-    SALON.tab = r.tab; await refreshSalon();
+    if (SALON.tab && SALON.tab.id === t.id) SALON.tab = r.tab;  // si mientras tanto tocó otra mesa, no se la quitamos
+    await refreshSalon();
   } catch (err) { toast(err.message, "err"); }
 }
 
