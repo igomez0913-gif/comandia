@@ -15,8 +15,8 @@
 #include <wchar.h>
 #include <stdio.h>
 
-#define PORT 8000
-#define URL L"http://127.0.0.1:8000"
+#define PORT 8100
+#define URL L"http://127.0.0.1:8100"
 #define WAIT_MS 45000
 
 static void error_box(const wchar_t *msg) {

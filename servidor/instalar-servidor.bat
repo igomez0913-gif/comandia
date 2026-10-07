@@ -92,7 +92,7 @@ del "%TEMP%\comandia-tarea.xml" >nul 2>&1
 
 echo [7/7] Iniciando el servidor
 rem Si habia un Comandia de un solo equipo abierto (Comandia.exe), se cierra para no duplicar.
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":8000 .*LISTENING"') do taskkill /f /pid %%P >nul 2>&1
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":8100 .*LISTENING"') do taskkill /f /pid %%P >nul 2>&1
 schtasks /Run /TN "Comandia Servidor" >nul
 set "OK="
 for /l %%I in (1,1,40) do if not defined OK (

@@ -17,6 +17,9 @@ La primera vez instala las librerías (requiere internet).
 
 **Linux/Mac:** `pip install -r requirements.txt` y `./iniciar.sh`.
 
+**Puertos:** en un solo equipo Comandia usa `http://127.0.0.1:8100` (Vértice usa el 8000), así que los dos pueden estar abiertos a la vez; cada uno con su carpeta, su base de datos y su `.secret`.
+En modo servidor usa el 443 (HTTPS) y el 80 (instalación); si ese equipo ya tiene otro sistema en esos puertos, edita `servidor.conf` (`puerto_https=8443`, `puerto_http=8080`) **antes** de ejecutar `servidor\instalar-servidor.bat`.
+
 Los datos viven en MySQL/MariaDB (SQLite solo para pruebas). Guarda copia de `.secret` y de la base: son lo único que no se puede regenerar.
 Respaldos diarios automáticos en **Configuración › Respaldos**; herramientas: `python comandia_cmd.py <herramienta>` (`setup_mysql`, `actualizar_db`, `resumen_db`, `restaurar`, `servidor`).
 

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 rem Apaga Comandia cuando se inicio con Comandia.exe (sin ventana). Equivale a Comandia.exe /detener
-set PORT=8000
+set PORT=8100
 set FOUND=0
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%PORT% .*LISTENING"') do (
   taskkill /f /pid %%P >nul 2>&1
