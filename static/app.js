@@ -961,7 +961,7 @@ async function newDocument(kind, opts = {}) {
       const offer = offers.find((o) => o.presentation_id === it.presentation_id);
       const base = left[it.product_id] || 0;
       if (!offer || base <= 0) return;
-      const qty = Math.min(it.qty, Math.floor((base / offer.factor) * 100) / 100);
+      const qty = Math.min(it.qty, Math.floor((base / offer.factor) * 1e8 + 1e-3) / 1e8);  // hasta 8 decimales: la parte de un plato compartido se acredita exacta (el +1e-3 absorbe el error de la coma flotante: 0.29 × 1e8 = 28999999.999999996)
       if (qty <= 0) return;
       left[it.product_id] = base - qty * offer.factor;
       const dunit = it.discount && it.qty ? it.discount / it.qty : 0; // la nota repite el descuento de la factura, por unidad

@@ -185,15 +185,17 @@ def test_anular_un_plato_dividido_lo_anula_completo_y_sale_una_vez_en_el_reporte
     assert r.status_code == 200 and all(ln["status"] == "anulada" for ln in r.json()["lines"]) and r.json()["total"] == 0
     rep = client.get("/api/reports/voided-lines", headers=auth).json()
     assert len(rep["rows"]) == 1 and rep["rows"][0]["amount"] == 100.0 and rep["total"] == 100.0
-    # una parte ya cobrada impide anular todo el plato
+    # si ya se cobró una parte, se anula lo que falta (el comensal se fue sin pagar) y lo cobrado se conserva; como ya no queda nada, la cuenta se cierra sola
     t2 = open_tab(client, auth, rest, "2", guests=2)
     add(client, auth, t2, rest["burger"], 1)
     l2 = send(client, auth, t2)["lines"][0]["id"]
     split(client, auth, t2, l2, [1, 2])
     pay_guest(client, auth, t2, 1, 50)
     other = next(ln for ln in tab_of(client, auth, t2["id"])["lines"] if ln["status"] == "enviada")
-    bad = client.post(f"/api/tabs/{t2['id']}/lines/{other['id']}/void", json={"reason": "Prueba de anulación"}, headers=auth)
-    assert bad.status_code == 400 and "ya se cobró" in bad.json()["detail"]
+    r2 = client.post(f"/api/tabs/{t2['id']}/lines/{other['id']}/void", json={"reason": "Se fueron sin pagar"}, headers=auth)
+    assert r2.status_code == 200 and sorted(ln["status"] for ln in r2.json()["lines"]) == ["anulada", "cobrada"] and r2.json()["status"] == "Cerrada"
+    rep = client.get("/api/reports/voided-lines", headers=auth).json()
+    assert sorted(r["amount"] for r in rep["rows"]) == [50.0, 100.0] and rep["total"] == 150.0  # la parte anulada de la cuenta 2 también sale en el reporte
 
 
 def test_dividir_un_plato_sin_enviar_y_quitarlo(client, auth, rest):  # noqa: F811

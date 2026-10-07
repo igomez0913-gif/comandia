@@ -234,18 +234,14 @@ def _comanda_out(c: Comanda) -> dict:
 def kitchen(station: str = "", db: Session = Depends(get_db), user: User = Depends(require("cocina", "mesas"))):
     """Pantalla de cocina o barra: las comandas con algo por preparar o por llevar a la mesa, las más viejas primero.
     Los productos anulados salen tachados para que la cocina sepa que ya no se hacen."""
-    q = db.query(Comanda).join(Tab, Tab.id == Comanda.tab_id).filter(Tab.status.in_(("Abierta", "Cerrada")))
+    # Todo el filtro va en la consulta (antes del límite): si se filtrara después, las 300 comandas más viejas, ya servidas, taparían a las nuevas.
+    # Una cuenta ya cobrada sigue mostrando sus platos por llevar a la mesa, pero solo por unas horas (si nadie los marcó «servido» no se quedan para siempre).
+    q = (db.query(Comanda).join(Tab, Tab.id == Comanda.tab_id)
+         .filter(or_(Tab.status == "Abierta", and_(Tab.status == "Cerrada", Tab.closed_at >= now_local() - timedelta(hours=3))))
+         .filter(Comanda.lines.any(and_(TabLine.status != "anulada", TabLine.kds_status != "servido"))))  # algo por preparar o por llevar
     if station:
         q = q.filter(Comanda.station == station.strip().lower())
-    out = []
-    for c in q.order_by(Comanda.id).limit(300).all():
-        live = [ln for ln in c.lines if ln.status != "anulada"]
-        if live and all(ln.kds_status == "servido" for ln in live):
-            continue
-        if not live:
-            continue  # todo anulado: no hay nada que hacer
-        out.append(_comanda_out(c))
-    return {"station": station, "comandas": out}
+    return {"station": station, "comandas": [_comanda_out(c) for c in q.order_by(Comanda.id).limit(300).all()]}
 
 
 class LineStatusIn(BaseModel):

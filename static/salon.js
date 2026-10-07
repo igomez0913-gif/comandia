@@ -60,13 +60,21 @@ async function reloadReady() {
   SALON.ready = next; SALON.readyKnown = true;
 }
 async function refreshSalon(keepScroll = true) {
-  SALON.salons = await api("/api/salons");
-  await reloadTabs();
-  if (SALON.tab) SALON.tab = await api("/api/tabs/" + SALON.tab.id).catch(() => null);
-  if (SALON.tab && SALON.tab.status !== "Abierta" && !SALON.keepClosed) SALON.tab = null;
+  // Con wifi lenta una respuesta vieja puede llegar después de una acción o de tocar otra mesa: solo se pinta la última petición y no se pisa la cuenta que el mesero eligió mientras tanto.
+  const ticket = (SALON.refreshSeq = (SALON.refreshSeq || 0) + 1), wanted = SALON.tab ? SALON.tab.id : null;
+  const [salons, tabs, tab] = await Promise.all([api("/api/salons"), api("/api/tabs"), wanted ? api("/api/tabs/" + wanted).catch(() => null) : null]);
+  if (ticket !== SALON.refreshSeq) return;
+  SALON.salons = salons; SALON.tabs = tabs;
+  if ((SALON.tab ? SALON.tab.id : null) === wanted) {
+    SALON.tab = tab;
+    if (SALON.tab && SALON.tab.status !== "Abierta" && !SALON.keepClosed) SALON.tab = null;
+  }
   await reloadReady();
+  if (ticket !== SALON.refreshSeq) return;
   paintSalon();
 }
+/** Avisa cuando una acción dejó la cuenta cerrada (se cobró todo lo que había, o lo último que quedaba se anuló o pasó a otra mesa). */
+function closedNote(tab) { if (tab && tab.status === "Cerrada") toast(`La cuenta ${tab.number} se cerró: ya no quedaba nada por cobrar`); }
 /** Ejecuta una acción sobre la cuenta, muestra el error si lo hay y repinta (sin recargar toda la pantalla). */
 async function salonAct(action, okMessage) {
   try { const r = await action(); if (okMessage) toast(okMessage); await refreshSalon(); return r; }
@@ -154,7 +162,7 @@ function lineRow(t, ln) {
       ${ln.status === "anulada" ? `<div class="tl-sub">Anulada: ${esc(ln.void_reason)}</div>` : ""}</div>
     <div class="tl-side"><span class="tl-price">${money(ln.total)}</span>
       <span class="pill ${cls}">${sent && ln.kds ? esc(KDS_LABEL[ln.kds] || label) : label}</span>
-      <span class="tl-actions">${(fresh || sent) && t.guests > 1 ? `<select class="guest-sel" data-guest="${ln.id}" aria-label="Comensal de este consumo">${Array.from({ length: t.guests }, (_, i) => `<option value="${i + 1}" ${ln.guest === i + 1 ? "selected" : ""}>C${i + 1}</option>`).join("")}</select>` : ""}${(fresh || sent) && t.guests > 1 ? (ln.group_id === null ? `<button type="button" class="btn ghost sm" data-split="${ln.id}" title="Compartir entre varios comensales">Dividir</button>` : `<button type="button" class="btn ghost sm" data-join="${ln.id}" title="Volver a dejarlo en una sola línea">Juntar</button>`) : ""}${fresh ? `<button type="button" class="btn ghost sm" data-note="${ln.id}">Nota</button><button type="button" class="btn ghost sm" data-del="${ln.id}">Quitar</button>` : ""}${sent ? `<button type="button" class="btn ghost sm" data-void="${ln.id}">Anular</button>` : ""}</span></div></li>`;
+      <span class="tl-actions">${(fresh || sent) && t.guests > 1 ? `<select class="guest-sel" data-guest="${ln.id}" aria-label="Comensal de este consumo">${Array.from({ length: t.guests }, (_, i) => `<option value="${i + 1}" ${ln.guest === i + 1 ? "selected" : ""}>C${i + 1}</option>`).join("")}</select>` : ""}${(fresh || sent) && t.guests > 1 ? (ln.group_id === null ? `<button type="button" class="btn ghost sm" data-split="${ln.id}" title="Compartir entre varios comensales">Dividir</button>` : ln.group_paid ? "" : `<button type="button" class="btn ghost sm" data-join="${ln.id}" title="Volver a dejarlo en una sola línea">Juntar</button>`) : ""}${fresh ? `<button type="button" class="btn ghost sm" data-note="${ln.id}" title="${ln.group_id !== null ? "La nota es del plato: la cocina lo recibe una sola vez" : ""}">Nota</button><button type="button" class="btn ghost sm" data-del="${ln.id}" title="${ln.group_id !== null ? "Quita el plato completo (todas sus partes)" : ""}">${ln.group_id !== null ? "Quitar plato" : "Quitar"}</button>` : ""}${sent ? `<button type="button" class="btn ghost sm" data-void="${ln.id}" title="${ln.group_id !== null ? "Anula lo que falta por cobrar de este plato (todas las partes pendientes)" : ""}">${ln.group_id !== null ? "Anular plato" : "Anular"}</button>` : ""}</span></div></li>`;
 }
 
 function tabPanelHtml() {
@@ -182,8 +190,8 @@ function tabPanelHtml() {
         <button type="button" data-more="move">Cambiar de mesa</button><button type="button" data-more="merge">Unir con otra cuenta</button>
         <button type="button" data-more="transfer" ${t.lines_count ? "" : "disabled"}>Pasar consumos a otra mesa</button>
         <button type="button" data-more="guests">Comensales y nombre</button>
-        <button type="button" data-more="equal" ${t.lines_count ? "" : "disabled"}>Dividir la cuenta en partes iguales</button>
-        ${t.lines.some((l) => l.group_id !== null && ["nueva", "enviada"].includes(l.status)) ? `<button type="button" data-more="unsplit">Juntar los platos divididos</button>` : ""}
+        <button type="button" data-more="equal" ${t.lines_count && !t.lines.some((l) => l.group_id !== null && ["nueva", "enviada"].includes(l.status)) ? "" : "disabled"} title="Si ya hay platos divididos, júntalos primero">Dividir la cuenta en partes iguales</button>
+        ${t.lines.some((l) => l.group_id !== null && ["nueva", "enviada"].includes(l.status) && !l.group_paid) ? `<button type="button" data-more="unsplit">Juntar los platos divididos</button>` : ""}
         <button type="button" data-more="empty" ${t.lines.some((l) => ["nueva", "enviada", "cobrada"].includes(l.status)) ? "disabled" : ""}>Cerrar cuenta vacía</button></div></details></div>`;
 }
 
@@ -211,7 +219,7 @@ function bindSalon() {
   if ($("#menu-q")) { $("#menu-q").oninput = (e) => { SALON.q = e.target.value; const g = $(".menu-grid"); const keep = e.target.selectionStart; keepMenuOpen(true); const i = $("#menu-q"); if (i) { i.focus(); i.setSelectionRange(keep, keep); } }; }
   $$("[data-add]", root).forEach((b) => b.onclick = () => addProduct(+b.dataset.add));
   $$("[data-q]", root).forEach((b) => b.onclick = () => { const ln = t.lines.find((l) => l.id === +b.dataset.q); const qty = Math.max(0, ln.qty + +b.dataset.d); salonAct(() => qty === 0 ? api(`/api/tabs/${t.id}/lines/${ln.id}/void`, { method: "POST", body: {} }) : api(`/api/tabs/${t.id}/lines/${ln.id}`, { method: "PUT", body: { qty } })); });
-  $$("[data-del]", root).forEach((b) => b.onclick = () => salonAct(() => api(`/api/tabs/${t.id}/lines/${b.dataset.del}/void`, { method: "POST", body: {} })));
+  $$("[data-del]", root).forEach((b) => b.onclick = () => salonAct(async () => { const r = await api(`/api/tabs/${t.id}/lines/${b.dataset.del}/void`, { method: "POST", body: {} }); closedNote(r); return r; }));
   $$("[data-note]", root).forEach((b) => b.onclick = () => noteModal(t.lines.find((l) => l.id === +b.dataset.note)));
   $$("[data-guest]", root).forEach((sel) => sel.onchange = () => salonAct(() => api(`/api/tabs/${t.id}/guest`, { method: "POST", body: { line_ids: [+sel.dataset.guest], guest: +sel.value } })));
   $$("[data-split]", root).forEach((b) => b.onclick = () => splitModal(t.lines.find((l) => l.id === +b.dataset.split)));
@@ -275,10 +283,10 @@ function noteModal(ln) {
 function voidModal(ln) {
   const needPin = !can("anular");
   openModal(`Anular ${ln.description}`, [
-    { type: "info", html: `Ya se envió a cocina. La anulación queda registrada y se avisa a la estación${needPin ? "; necesitas el PIN de un supervisor" : ""}.` },
+    { type: "info", html: `Ya se envió a cocina. La anulación queda registrada y se avisa a la estación${needPin ? "; necesitas el PIN de un supervisor" : ""}.${ln.group_id !== null ? " <strong>Es un plato compartido: se anulan las partes de todos los comensales que aún no han pagado</strong> (lo ya cobrado se conserva)." : ""}` },
     { name: "reason", label: "Motivo", required: true, full: true, placeholder: "Ej. el cliente se fue, error de pedido…" },
     ...(needPin ? [{ name: "auth_pin", label: "PIN del supervisor", type: "password", full: true, required: true, autocomplete: "off" }] : []),
-  ], async (b) => { await api(`/api/tabs/${SALON.tab.id}/lines/${ln.id}/void`, { method: "POST", body: { reason: b.reason, auth_pin: b.auth_pin || "" } }); await refreshSalon(); return "stay"; }, { submitLabel: "Anular producto", danger: true });
+  ], async (b) => { const r = await api(`/api/tabs/${SALON.tab.id}/lines/${ln.id}/void`, { method: "POST", body: { reason: b.reason, auth_pin: b.auth_pin || "" } }); await refreshSalon(); closedNote(r); return "stay"; }, { submitLabel: "Anular producto", danger: true });
 }
 
 async function sendOrder() {
@@ -315,9 +323,11 @@ async function moreAction(kind) {
   if (kind === "transfer") {
     const targets = salon.items.filter((i) => i.kind === "mesa" && (!i.tab || i.tab.id !== t.id));
     return openForm("Pasar consumos a otra mesa", `
-      <div class="full"><div class="muted small">Consumos a pasar</div>${t.lines.filter((l) => ["nueva", "enviada"].includes(l.status)).map((l) => `<label class="check-row"><input type="checkbox" name="l" value="${l.id}" /> ${l.qty} × ${esc(l.description)} <span>${money(l.total)}</span></label>`).join("")}</div>
+      <div class="full"><div class="muted small">Consumos a pasar</div>${t.lines.filter((l) => ["nueva", "enviada"].includes(l.status) && !l.group_paid).map((l) => `<label class="check-row"><input type="checkbox" name="l" value="${l.id}" data-gr="${l.group_id ?? ""}" /> ${l.qty} × ${esc(l.description)}${l.group_id !== null ? ` <small class="muted">(parte ${esc(l.portion)}, C${l.guest})</small>` : ""} <span>${money(l.total)}</span></label>`).join("")}
+        ${t.lines.some((l) => l.group_paid && ["nueva", "enviada"].includes(l.status)) ? `<small class="muted">Los platos compartidos de los que ya se cobró una parte no se pueden pasar.</small>` : ""}</div>
       <label class="full">A la mesa<select name="to">${targets.map((i) => `<option value="${i.id}">Mesa ${esc(i.name)}${i.tab ? ` · ${esc(i.tab.number)} (ocupada)` : " · libre"}</option>`).join("")}</select></label>`,
-    async (form) => { const ids = $$("[name=l]:checked", form).map((x) => +x.value); if (!ids.length) throw new Error("Marca al menos un consumo"); await api(`/api/tabs/${t.id}/transfer`, { method: "POST", body: { line_ids: ids, to_table_id: +$("[name=to]", form).value } }); await refreshSalon(); return "stay"; }, { submitLabel: "Pasar consumos" });
+    async (form) => { const ids = $$("[name=l]:checked", form).map((x) => +x.value); if (!ids.length) throw new Error("Marca al menos un consumo"); const r = await api(`/api/tabs/${t.id}/transfer`, { method: "POST", body: { line_ids: ids, to_table_id: +$("[name=to]", form).value } }); await refreshSalon(); closedNote(r.from); return "stay"; },
+    { submitLabel: "Pasar consumos", mount: (form) => $$("[name=l][data-gr]:not([data-gr=''])", form).forEach((c) => c.onchange = () => $$(`[name=l][data-gr="${c.dataset.gr}"]`, form).forEach((x) => { x.checked = c.checked; })) });  // las partes de un plato compartido viajan juntas
   }
 }
 
@@ -353,7 +363,7 @@ function splitModal(ln) {
 function splitEqualModal() {
   const t = SALON.tab, total = t.total;
   openModal("Dividir la cuenta en partes iguales", [
-    { type: "info", html: `Cada comensal queda con la <strong>misma parte de cada consumo</strong> (${money(total)} entre N) y se cobra con su propia factura. Se pierde la asignación de comensales actual; puedes deshacerlo con «Juntar los platos divididos».` },
+    { type: "info", html: `Cada comensal queda con la <strong>misma parte de cada consumo</strong> (${money(total)} entre N) y se cobra con su propia factura. Cada consumo se reparte entre los comensales 1 a N. Si te equivocas, «Juntar los platos divididos» devuelve cada consumo al comensal que lo pidió.` },
     { name: "parts", label: "¿Entre cuántas personas?", type: "number", value: Math.max(t.guests, 2), min: 2, max: 20, required: true, full: true },
   ], async (b) => {
     const n = Math.max(2, Math.min(20, +b.parts || 2));
@@ -461,6 +471,7 @@ function payMount(form, t, tipPct, banks = [], opts = {}) {
   $$("[data-tip]", form).forEach((b) => b.onclick = () => { $$("[data-tip]", form).forEach((x) => x.classList.toggle("on", x === b)); recalcTotal(); });
   $("#tip", form).oninput = () => { $$("[data-tip]", form).forEach((x) => x.classList.remove("on")); };
   $("#pay-split", form).onclick = () => { if (rows.children.length < 8) { addRow("Tarjeta", 0); recalcChange(); } };
+  $("#pay-n", form).onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("#pay-eq", form).click(); } };  // Enter en este campo reparte; nunca cobra (el formulario sí cobra con Enter en los demás)
   $("#pay-eq", form).onclick = () => {  // reparte el total entre N personas, con los centavos sobrantes a las primeras
     const n = Math.max(2, Math.min(8, +$("#pay-n", form).value || 2)), cents = splitCents(Math.round(total() * 100), Array(n).fill(1));
     rows.innerHTML = ""; cents.forEach((c) => addRow("Efectivo", (c / 100).toFixed(2))); recalcChange();

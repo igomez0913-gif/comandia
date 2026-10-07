@@ -79,6 +79,7 @@ def main() -> int:
     print("\n2) Actualizando estructura")
     comandia.Base.metadata.create_all(comandia.engine)
     comandia.add_missing_columns(comandia.engine)
+    comandia.widen_columns(comandia.engine)
     comandia.add_missing_indexes(comandia.engine)
     db = comandia.SessionLocal()
     try:

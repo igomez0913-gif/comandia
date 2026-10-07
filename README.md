@@ -20,7 +20,7 @@ La primera vez instala las librerías (requiere internet).
 **Puertos:** en un solo equipo Comandia usa `http://127.0.0.1:8100` (Vértice usa el 8000), así que los dos pueden estar abiertos a la vez; cada uno con su carpeta, su base de datos y su `.secret`.
 En modo servidor usa el 443 (HTTPS) y el 80 (instalación); si ese equipo ya tiene otro sistema en esos puertos, edita `servidor.conf` (`puerto_https=8443`, `puerto_http=8080`) **antes** de ejecutar `servidor\instalar-servidor.bat`.
 
-Los datos viven en MySQL/MariaDB (SQLite solo para pruebas). Guarda copia de `.secret` y de la base: son lo único que no se puede regenerar.
+Los datos viven en MySQL/MariaDB (SQLite solo para pruebas). Comandia trabaja con aislamiento `READ COMMITTED` (un doble clic en «Cobrar» no emite dos facturas): si activas el registro binario, usa `binlog_format=MIXED` o `ROW`, nunca `STATEMENT`. Guarda copia de `.secret` y de la base: son lo único que no se puede regenerar.
 Respaldos diarios automáticos en **Configuración › Respaldos**; herramientas: `python comandia_cmd.py <herramienta>` (`setup_mysql`, `actualizar_db`, `resumen_db`, `restaurar`, `servidor`).
 
 Varias computadoras en la red (HTTPS propio, inicio automático): **[servidor/GUIA-SERVIDOR.md](servidor/GUIA-SERVIDOR.md)**.
@@ -40,6 +40,9 @@ Varias computadoras en la red (HTTPS propio, inicio automático): **[servidor/GU
   Puede cambiar de mesa, unir cuentas, pasar consumos y dividir por comensal. Anular algo ya enviado pide motivo y el PIN de un supervisor.
   **Dividir la cuenta:** cambiar de comensal un consumo (aun enviado a cocina), partir un plato compartido entre varios comensales (la cocina lo ve una sola vez),
   o dividir toda la cuenta en partes iguales. Los centavos se reparten sin perder ni inventar nada: la suma de las partes es siempre el total.
+  Cada parte se factura con su fracción exacta (cantidad × precio = importe, y la nota de crédito puede devolver justo lo cobrado) y el inventario baja en proporción.
+  «Juntar» devuelve cada consumo al comensal que lo pidió. Si un comensal ya pagó su parte de un plato compartido, lo que falta se puede cobrar o anular (se fueron sin pagar), pero ya no juntar ni pasar de mesa.
+  Un solo consumo de más de ~L 1,000,000 no se divide (el sistema avisa); la existencia se guarda con 4 decimales y las facturas con 8.
 - **Cocina y barra:** pantalla con *Nuevos / En preparación / Listos*, aviso sonoro y tiempos con color. Al mesero le avisa cuando algo está listo.
 - **Caja:** cobra toda la cuenta, por comensal o por consumos; propina sugerida, pago dividido y cambio. Emite la factura SAR, descuenta los ingredientes y cierra la cuenta en una sola operación.
   Abre y cierra **turnos de caja** con cuadre por forma de pago (las propinas entran a lo esperado).

@@ -114,7 +114,9 @@ DB_URL = os.environ.get("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'com
 # MySQL: si el servidor no responde se avisa en 5 s (el indicador «BD en línea / offline» y las ventas sin conexión dependen de eso).
 connect_args = {"check_same_thread": False} if DB_URL.startswith("sqlite") else {"connect_timeout": 5}
 # Varios usuarios a la vez (modo servidor): más conexiones listas y se renuevan cada hora (MySQL cierra las inactivas).
-pool_args = {} if DB_URL.startswith("sqlite") else {"pool_size": 15, "max_overflow": 25, "pool_recycle": 3600}
+# READ COMMITTED: con el aislamiento por omisión de MySQL (REPEATABLE READ) una petición que espera el bloqueo de una cuenta seguiría viendo las líneas de antes de que la otra cobrara
+# y emitiría una segunda factura (un doble clic en «Cobrar»). Con READ COMMITTED lo que lee después de obtener el bloqueo es lo último confirmado.
+pool_args = {} if DB_URL.startswith("sqlite") else {"pool_size": 15, "max_overflow": 25, "pool_recycle": 3600, "isolation_level": "READ COMMITTED"}
 engine = create_engine(DB_URL, connect_args=connect_args, pool_pre_ping=True, **pool_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
@@ -430,7 +432,7 @@ class Stock(Base):
     id = Column(Integer, primary_key=True)
     product_id = Column(Integer, ForeignKey("products.id"))
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"))
-    qty = Column(Numeric(12, 2), default=0)
+    qty = Column(Numeric(14, 4), default=0)  # 4 decimales como las recetas: 0.004 lb de sal por plato no puede redondearse a cero
     __table_args__ = (UniqueConstraint("product_id", "warehouse_id", name="uq_stock"),)
     product = relationship("Product")
     warehouse = relationship("Warehouse")
@@ -441,7 +443,7 @@ class StockMove(Base):
     id = Column(Integer, primary_key=True)
     product_id = Column(Integer, ForeignKey("products.id"))
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"))
-    qty = Column(Numeric(12, 2), default=0)
+    qty = Column(Numeric(14, 4), default=0)
     concept = Column(String(200), default="")
     created_at = Column(DateTime, default=now_local)
 
@@ -538,7 +540,7 @@ class DocumentItem(Base):
     description = Column(String(200), nullable=False)
     unit = Column(String(20), default="und")
     factor = Column(Numeric(12, 4), default=1)
-    qty = Column(Numeric(12, 2), default=1)
+    qty = Column(Numeric(16, 8), default=1)  # 8 decimales: la parte de un plato compartido se factura como 0.3334 de plato y cantidad × precio debe dar el importe
     price = Column(Numeric(12, 2), default=0)
     discount = Column(Numeric(12, 2), default=0)  # descuento o rebaja de la línea, en lempiras (total = cantidad × precio − descuento)
     tax_treatment = Column(String(20), default="gravado15")
@@ -1084,14 +1086,20 @@ def stock_of(db: Session, product_id: int, warehouse_id: int, lock: bool = False
     return row
 
 
+STOCK_DECIMALS = 4
+STOCK_TOLERANCE = 0.001  # lo que puede faltar por redondeo al cobrar un plato compartido parte por parte (hasta 20 partes × media diezmilésima cada una)
+
+
 def adjust_stock(db: Session, product_id: int, warehouse_id: int, qty_base: float, concept: str, allow_negative: bool = False):
     row = stock_of(db, product_id, warehouse_id, lock=True)  # bloquea la fila: dos cajas vendiendo lo mismo no pisan la existencia
     new_qty = float(row.qty) + qty_base
-    if new_qty < -0.0001 and not allow_negative:
+    if new_qty < -STOCK_TOLERANCE and not allow_negative:
         prod = db.get(Product, product_id)
         raise HTTPException(400, f"Stock insuficiente de {prod.name if prod else product_id} en la bodega seleccionada")
-    row.qty = Decimal(str(round(new_qty, 2)))
-    db.add(StockMove(product_id=product_id, warehouse_id=warehouse_id, qty=qty_base, concept=concept, created_at=now_local()))
+    if new_qty < 0 and not allow_negative:
+        new_qty = 0.0  # una diferencia de redondeo no deja la existencia en negativo
+    row.qty = Decimal(str(round(new_qty, STOCK_DECIMALS)))
+    db.add(StockMove(product_id=product_id, warehouse_id=warehouse_id, qty=Decimal(str(round(qty_base, STOCK_DECIMALS))), concept=concept, created_at=now_local()))
 
 
 def recipe_lines(db: Session, product_id: int) -> list:
@@ -1624,6 +1632,7 @@ NEW_COLUMNS = [
     ("company", "prices_include_tax", "INTEGER DEFAULT 0"),
     ("tab_lines", "share", "DECIMAL(12,8) NULL"),
     ("tab_lines", "group_id", "INTEGER NULL"),
+    ("tab_lines", "orig_guest", "INTEGER NULL"),
     ("products", "kind", "VARCHAR(12) DEFAULT 'producto'"),
     ("products", "station", "VARCHAR(20) DEFAULT ''"),
     ("purchases", "credit", "INTEGER DEFAULT 0"),
@@ -1690,6 +1699,26 @@ def add_missing_columns(eng):
                     pass  # la columna ya existe
 
 
+# Columnas que en una base existente hay que hacer más precisas (tabla, columna, tipo nuevo, decimales). Se hace una sola vez y se puede repetir.
+WIDEN_COLUMNS = [
+    ("document_items", "qty", "DECIMAL(16,8) NULL", 8),  # la parte de un plato compartido se factura con su fracción exacta
+    ("stocks", "qty", "DECIMAL(14,4) NULL", 4),  # los ingredientes de una receta se gastan en milésimas
+    ("stock_moves", "qty", "DECIMAL(14,4) NULL", 4),
+]
+
+
+def widen_columns(eng):
+    """Agranda los decimales de las columnas de WIDEN_COLUMNS en MySQL/MariaDB (SQLite no limita los decimales). No toca lo que ya está ancho."""
+    if eng.url.get_backend_name() == "sqlite":
+        return
+    with eng.begin() as conn:
+        for table, name, ddl, scale in WIDEN_COLUMNS:
+            row = conn.exec_driver_sql(
+                "SELECT NUMERIC_SCALE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s", (table, name)).fetchone()
+            if row is not None and row[0] is not None and int(row[0]) < scale:
+                conn.exec_driver_sql(f"ALTER TABLE `{table}` MODIFY COLUMN `{name}` {ddl}")
+
+
 # Índices que aceleran los listados y reportes por fecha cuando hay muchos documentos (los de llaves foráneas y los únicos ya los crea MySQL).
 NEW_INDEXES = [("ix_documents_issued_kind", "documents", "issued_at, kind"), ("ix_documents_offline", "documents", "offline_id"), ("ix_payments_created", "payments", "created_at")]
 
@@ -1740,6 +1769,7 @@ def startup():
             print("==========================================================\n")
         raise
     add_missing_columns(engine)
+    widen_columns(engine)
     add_missing_indexes(engine)
     db = SessionLocal()
     try:
@@ -3039,7 +3069,7 @@ def get_document(did: int, db: Session = Depends(get_db), user: User = Depends(c
     out = doc_out(d)
     if d.kind == "factura":
         # Unidades base por producto que todavía admite una nota de crédito (la pantalla la precarga con esto).
-        out["creditable"] = {str(k): round(v, 4) for k, v in creditable_base_qty(d).items() if v > 0.0001}
+        out["creditable"] = {str(k): round(v, 8) for k, v in creditable_base_qty(d).items() if v > 0.000001}  # 8 decimales: la parte de un plato compartido se acredita exacta
         out["creditable_amount"] = round(max(money(d.total) - credited_amount(d), 0), 2) if d.status != "Anulada" else 0
     return {"document": out, "company": {"name": company.name, "legal_name": company.legal_name, "rtn": company.rtn, "address": company.address, "phone": company.phone, "email": company.email, "logo": company.logo_path or ""}}
 
@@ -3168,7 +3198,7 @@ def make_document(db: Session, body: DocumentIn, user: Optional[User] = None, al
             prod = db.get(Product, product_id)
             if product_id not in left:
                 raise HTTPException(400, f"{prod.name} no está en la factura {ref.number}")
-            if qty_base > left[product_id] + 0.0001:
+            if qty_base > left[product_id] + 0.000001:
                 raise HTTPException(400, f"De {prod.name} solo quedan {max(left[product_id], 0):g} {prod.base_unit} por acreditar en la factura {ref.number}")
         pending = round(money(ref.total) - credited_amount(ref), 2)
         if total > pending + 0.005:

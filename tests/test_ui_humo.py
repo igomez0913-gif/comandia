@@ -274,6 +274,75 @@ def test_dividir_toda_la_cuenta_y_repartir_el_pago_entre_dos(server, browser):
     assert pg.errors == []
 
 
+def test_enter_en_repartir_no_cobra_y_un_plato_con_partes_cobradas_no_ofrece_lo_que_falla(server, browser):
+    pg = _page(browser)
+    _login(pg, server)
+    pg.click('[data-view="salon"]')
+    pg.wait_for_selector(".fi.mesa")
+    _abrir_cuenta(pg, "6", 3)
+    _agregar(pg, "Entradas", "Alitas BBQ")
+    pg.click("#t-send")
+    pg.wait_for_selector(".pill:has-text('Esperando')")
+    pg.click('.tline:has-text("Alitas BBQ") [data-split]')
+    pg.wait_for_selector("#modal.open .split-row")
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_selector(".tl-sub.part")
+    # Enter en «repartir el pago entre N personas» reparte; no debe cobrar ni cerrar la cuenta
+    pg.click("#t-pay")
+    pg.wait_for_selector("#pay-methods .pm-row")
+    pg.fill("#pay-n", "3")
+    pg.press("#pay-n", "Enter")
+    pg.wait_for_timeout(700)
+    assert pg.locator("#modal.open").count() == 1 and pg.locator(".pm-row").count() == 3
+    assert pg.locator('.fi.mesa.ocupada:has(strong:text-is("6"))').count() == 1  # la cuenta sigue abierta
+    pg.keyboard.press("Escape")
+    pg.click("#dc-yes")  # «cerrar sin guardar»: se escribió en el formulario
+    pg.wait_for_selector("#modal:not(.open)", state="attached")
+    # se cobra el comensal 1: del plato compartido ya no se puede juntar ni pasar a otra mesa, y anular quita lo que falta
+    pg.click("#t-pay")
+    pg.wait_for_selector("#pay-methods .pm-row")
+    pg.click("input[name=scope][value=guest]")
+    pg.select_option("select[name=guest]", "1")
+    pg.wait_for_timeout(150)
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_selector("#cf-no")
+    pg.click("#cf-no")
+    pg.wait_for_selector('.tline.enviada:has-text("Alitas BBQ")')
+    assert pg.locator("[data-join]").count() == 0
+    pg.click(".more > summary")
+    assert pg.locator('[data-more="unsplit"]').count() == 0 and pg.is_disabled('[data-more="equal"]')
+    pg.click(".more > summary")
+    pg.click('.tline.enviada:has-text("Alitas BBQ") >> nth=0 >> [data-void]')
+    pg.wait_for_selector("#modal.open input[name=reason]")
+    assert "plato compartido" in pg.inner_text("#modal-form").lower()
+    pg.fill("input[name=reason]", "Se fueron sin pagar")
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_timeout(1200)
+    assert pg.locator('.fi.mesa.ocupada:has(strong:text-is("6"))').count() == 0  # ya no quedaba nada por cobrar: la cuenta se cerró y la mesa quedó libre
+    assert pg.errors == []
+
+
+def test_una_respuesta_vieja_no_pisa_la_mesa_que_el_mesero_acaba_de_tocar(server, browser):
+    pg = _page(browser)
+    _login(pg, server)
+    pg.click('[data-view="salon"]')
+    pg.wait_for_selector(".fi.mesa")
+    _abrir_cuenta(pg, "7", 2)
+    id_a = pg.evaluate("SALON.tab.id")
+    _abrir_cuenta(pg, "8", 2)
+    pg.click('.fi.mesa[data-table]:has(strong:text-is("7"))')
+    pg.wait_for_selector('.tab-head h3:has-text("Mesa 7")')
+    # la red tarda en contestar por la cuenta 7 (el temporizador de refresco ya la había pedido) y mientras tanto el mesero toca la mesa 8
+    pg.evaluate("(A) => { const f = window.fetch; window.fetch = (u, o) => (String(u).endsWith('/api/tabs/' + A) && !(o && o.method) ? new Promise((r) => setTimeout(r, 900)).then(() => f(u, o)) : f(u, o)); }", id_a)
+    pg.evaluate("() => { window.__refresh = refreshSalon(); }")
+    pg.wait_for_timeout(250)
+    pg.click('.fi.mesa[data-table]:has(strong:text-is("8"))')
+    pg.wait_for_selector('.tab-head h3:has-text("Mesa 8")')
+    pg.wait_for_timeout(1600)  # llega la respuesta vieja
+    assert "Mesa 8" in pg.inner_text(".tab-head h3")  # antes el panel volvía a la mesa 7
+    assert pg.errors == []
+
+
 def test_disenar_el_plano_arrastrar_y_guardar(server, browser):
     pg = _page(browser)
     _login(pg, server)
