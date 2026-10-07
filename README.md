@@ -38,6 +38,8 @@ Varias computadoras en la red (HTTPS propio, inicio automático): **[servidor/GU
 
 - **Salón** (mesero): toca una mesa → abre cuenta → elige platillos (con descriptivos y notas) → **Enviar a cocina** → la comanda sale en la impresora de la estación y aparece en su pantalla.
   Puede cambiar de mesa, unir cuentas, pasar consumos y dividir por comensal. Anular algo ya enviado pide motivo y el PIN de un supervisor.
+  **Dividir la cuenta:** cambiar de comensal un consumo (aun enviado a cocina), partir un plato compartido entre varios comensales (la cocina lo ve una sola vez),
+  o dividir toda la cuenta en partes iguales. Los centavos se reparten sin perder ni inventar nada: la suma de las partes es siempre el total.
 - **Cocina y barra:** pantalla con *Nuevos / En preparación / Listos*, aviso sonoro y tiempos con color. Al mesero le avisa cuando algo está listo.
 - **Caja:** cobra toda la cuenta, por comensal o por consumos; propina sugerida, pago dividido y cambio. Emite la factura SAR, descuenta los ingredientes y cierra la cuenta en una sola operación.
   Abre y cierra **turnos de caja** con cuadre por forma de pago (las propinas entran a lo esperado).

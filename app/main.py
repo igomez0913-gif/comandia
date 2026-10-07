@@ -1622,6 +1622,8 @@ NEW_COLUMNS = [
     ("documents", "buyer_rtn", "VARCHAR(20) DEFAULT ''"),
     ("document_items", "cost", "DECIMAL(12,4) NULL"),
     ("company", "prices_include_tax", "INTEGER DEFAULT 0"),
+    ("tab_lines", "share", "DECIMAL(12,8) NULL"),
+    ("tab_lines", "group_id", "INTEGER NULL"),
     ("products", "kind", "VARCHAR(12) DEFAULT 'producto'"),
     ("products", "station", "VARCHAR(20) DEFAULT ''"),
     ("purchases", "credit", "INTEGER DEFAULT 0"),

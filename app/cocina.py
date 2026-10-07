@@ -5,12 +5,12 @@ import ipaddress
 import socket
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, and_, or_
 from sqlalchemy.orm import Session, relationship
 
 from app.logger import get_logger
@@ -302,7 +302,7 @@ def set_comanda_status(cid: int, body: LineStatusIn, db: Session = Depends(get_d
 def ready_for_pickup(db: Session = Depends(get_db), user: User = Depends(require("mesas"))):
     """Lo que ya está listo para llevar a la mesa. Un mesero ve solo lo de sus cuentas; quien administra el salón, todo."""
     q = (db.query(TabLine, Comanda, Tab).join(Comanda, Comanda.id == TabLine.comanda_id).join(Tab, Tab.id == TabLine.tab_id)
-         .filter(TabLine.kds_status == "listo", TabLine.status == "enviada", Tab.status == "Abierta"))
+         .filter(TabLine.kds_status == "listo", TabLine.status.in_(("enviada", "cobrada")), or_(Tab.status == "Abierta", and_(Tab.status == "Cerrada", Tab.closed_at >= now_local() - timedelta(hours=3)))))  # sigue avisando aunque ya hayan pagado: falta llevarlo a la mesa
     if user.role == "Mesero":
         q = q.filter(Tab.waiter_id == user.id)
     return [{"line_id": ln.id, "description": ln.description, "qty": float(ln.qty), "station": c.station, "tab_id": t.id, "tab_number": t.number,

@@ -639,6 +639,8 @@ CREATE TABLE IF NOT EXISTS tab_lines (
 	voided_by VARCHAR(120), 
 	void_reason VARCHAR(200), 
 	document_id INTEGER, 
+	share NUMERIC(12, 8), 
+	group_id INTEGER, 
 	comanda_id INTEGER, 
 	kds_status VARCHAR(12), 
 	ready_at DATETIME, 

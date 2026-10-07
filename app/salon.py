@@ -2,7 +2,8 @@
 
 Se carga al final de app/main.py, cuando ya existen la aplicación, los modelos y los permisos."""
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
+from fractions import Fraction
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Query
@@ -98,6 +99,8 @@ class TabLine(Base):
     voided_by = Column(String(120), default="")
     void_reason = Column(String(200), default="")
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)  # la factura con la que se cobró
+    share = Column(Numeric(12, 8), nullable=True)  # fracción del plato que cubre esta línea (vacío = todo): así se reparte un plato compartido entre comensales
+    group_id = Column(Integer, nullable=True)  # las partes de un mismo plato comparten este número (el de la línea original)
     comanda_id = Column(Integer, ForeignKey("comandas.id"), nullable=True)  # la comanda con la que se envió a cocina o barra
     kds_status = Column(String(12), default="pendiente")  # en la pantalla de cocina: pendiente, preparando, listo, servido
     ready_at = Column(DateTime, nullable=True)
@@ -152,8 +155,48 @@ def _minutes(since) -> int:
     return max(0, int((now_local() - since).total_seconds() // 60)) if since else 0
 
 
+def eff_qty(ln: "TabLine") -> float:
+    """Cantidad que realmente cubre la línea: la del plato por la fracción que le toca (un plato compartido se factura en partes)."""
+    return float(ln.qty) * (float(ln.share) if ln.share is not None else 1.0)
+
+
+def line_amount(ln: "TabLine") -> float:
+    return round(eff_qty(ln) * float(ln.unit_price), 2)
+
+
+def split_cents(total: int, weights: list) -> list:
+    """Reparte `total` centavos según los pesos sin perder ni sobrar ninguno (método del mayor residuo): las partes siempre suman el total."""
+    w = [Fraction(str(x)) for x in weights]
+    exact = [Fraction(total) * x / sum(w) for x in w]
+    base = [int(e) for e in exact]  # parte entera de cada una
+    extra = total - sum(base)
+    order = sorted(range(len(w)), key=lambda i: (-(exact[i] - base[i]), i))  # primero a quien más le faltó
+    for i in order[:extra]:
+        base[i] += 1
+    return base
+
+
+def _cents(ln: "TabLine") -> int:
+    return int((Decimal(str(ln.qty)) * Decimal(str(ln.unit_price)) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def _portion_label(share) -> str:
+    """«1/3», «2/5»… o un porcentaje cuando no es una fracción sencilla."""
+    if share is None:
+        return ""
+    f = Fraction(float(share)).limit_denominator(12)
+    if abs(float(f) - float(share)) < 5e-4 and f.denominator > 1:  # la parte que lleva el centavo sobrante vale 0.3334, no exactamente 1/3
+        return f"{f.numerator}/{f.denominator}"
+    return f"{float(share) * 100:.1f}%".replace(".0%", "%")
+
+
+def _is_part(ln: "TabLine") -> bool:
+    """Las partes de un plato dividido, salvo la original, no existen para la cocina (solo se factura su fracción)."""
+    return ln.group_id is not None and ln.group_id != ln.id
+
+
 def tab_total(t: Tab) -> float:
-    return round(sum(float(ln.qty) * float(ln.unit_price) for ln in t.lines if ln.status in ACTIVE_LINE), 2)
+    return round(sum(line_amount(ln) for ln in t.lines if ln.status in ACTIVE_LINE), 2)
 
 
 def _item_out(db: Session, it: FloorItem) -> dict:
@@ -267,8 +310,9 @@ def save_layout(sid: int, body: LayoutIn, db: Session = Depends(get_db), user: U
 # ───────────────────────── Cuentas ─────────────────────────
 def _line_out(ln: TabLine) -> dict:
     return {"id": ln.id, "product_id": ln.product_id, "sku": ln.product.sku if ln.product else "", "description": ln.description, "qty": float(ln.qty),
-            "unit_price": money(ln.unit_price), "total": round(float(ln.qty) * float(ln.unit_price), 2), "station": ln.station, "guest": ln.guest,
-            "descriptives": ln.descriptives, "note": ln.note, "status": ln.status, "kds": ln.kds_status if ln.status == "enviada" else None, "created_by": ln.created_by,
+            "unit_price": money(ln.unit_price), "total": line_amount(ln), "station": ln.station, "guest": ln.guest,
+            "share": float(ln.share) if ln.share is not None else None, "portion": _portion_label(ln.share), "group_id": ln.group_id, "is_part": _is_part(ln),
+            "descriptives": ln.descriptives, "note": ln.note, "status": ln.status, "kds": ln.kds_status if ln.status == "enviada" and ln.comanda_id else None, "created_by": ln.created_by,
             "sent_at": ln.sent_at.isoformat() if ln.sent_at else None, "void_reason": ln.void_reason, "document_id": ln.document_id}
 
 
@@ -283,7 +327,7 @@ def _tab_out(db: Session, t: Tab, detail: bool = True) -> dict:
         out["guests_totals"] = {}
         for ln in t.lines:
             if ln.status in ACTIVE_LINE:
-                out["guests_totals"][str(ln.guest)] = round(out["guests_totals"].get(str(ln.guest), 0) + float(ln.qty) * float(ln.unit_price), 2)
+                out["guests_totals"][str(ln.guest)] = round(out["guests_totals"].get(str(ln.guest), 0) + line_amount(ln), 2)
         out["settlements"] = [{"id": x.id, "document_id": x.document_id, "tip": money(x.tip), "tip_method": x.tip_method, "lines": x.lines,
                                "created_at": x.created_at.isoformat() if x.created_at else None, "user": x.user_name}
                               for x in db.query(TabSettlement).filter(TabSettlement.tab_id == t.id).order_by(TabSettlement.id).all()]
@@ -408,6 +452,11 @@ class LineUpdate(BaseModel):
     guest: Optional[int] = Field(default=None, ge=1, le=100)
 
 
+def _group_of(t: Tab, ln: TabLine) -> list:
+    """Todas las partes del plato al que pertenece la línea (ella sola si no está dividido)."""
+    return [x for x in t.lines if x.group_id == ln.group_id] if ln.group_id is not None else [ln]
+
+
 def _get_line(db: Session, t: Tab, lid: int) -> TabLine:
     ln = next((x for x in t.lines if x.id == lid), None)
     if not ln:
@@ -423,6 +472,8 @@ def update_line(tid: int, lid: int, body: LineUpdate, db: Session = Depends(get_
     if ln.status != "nueva":
         raise HTTPException(400, "Esa línea ya se envió a cocina: agrega otra o anúlala con autorización")
     if body.qty is not None:
+        if ln.group_id is not None:
+            raise HTTPException(400, "Este plato está dividido entre comensales: junta las partes para cambiar la cantidad")
         ln.qty = Decimal(str(body.qty))
     if body.note is not None:
         ln.note = body.note.strip()
@@ -446,23 +497,31 @@ def void_line(tid: int, lid: int, body: VoidIn, db: Session = Depends(get_db), u
     t = _get_tab(db, tid, lock=True)
     _need_open(t)
     ln = _get_line(db, t, lid)
+    parts = _group_of(t, ln)  # un plato dividido entre comensales se quita o se anula completo
     if ln.status == "nueva":
-        t.lines.remove(ln)
+        for p in parts:
+            t.lines.remove(p)
         db.commit()
         return _tab_out(db, t)
     if ln.status != "enviada":
         raise HTTPException(400, f"Esa línea ya está {ln.status}")
+    if any(p.status == "cobrada" for p in parts):
+        raise HTTPException(400, f"Una parte de «{ln.description}» ya se cobró: no se puede anular todo el plato")
     reason = body.reason.strip()
     if len(reason) < 3:
         raise HTTPException(400, "Escribe el motivo de la anulación")
     who = user
     if not has_perm(user, "anular"):
         who = authorize_with_pin(db, user, body.auth_pin, "anular", "Anular un producto ya enviado a cocina necesita el PIN de un supervisor")
-    ln.status, ln.voided_at, ln.voided_by, ln.void_reason = "anulada", now_local(), who.name, reason
-    audit(db, user, "Anuló producto de la cuenta", f"{t.number} · {float(ln.qty):g} × {ln.description} · {reason}" + (f" · autorizó {who.name}" if who.id != user.id else ""), "cuenta", t.id)
+    when = now_local()
+    for p in parts:
+        p.status, p.voided_at, p.voided_by, p.void_reason = "anulada", when, who.name, reason
+    head = next((p for p in parts if not _is_part(p)), ln)
+    audit(db, user, "Anuló producto de la cuenta", f"{t.number} · {float(head.qty):g} × {head.description} · {reason}" + (f" · dividido en {len(parts)} partes" if len(parts) > 1 else "")
+          + (f" · autorizó {who.name}" if who.id != user.id else ""), "cuenta", t.id)
     db.commit()
     from app import cocina
-    cocina.notify_void(db, t, ln)  # avisa a la estación para que no lo prepare (o lo deje de preparar)
+    cocina.notify_void(db, t, head)  # avisa a la estación para que no lo prepare (o lo deje de preparar)
     return _tab_out(db, t)
 
 
@@ -471,10 +530,13 @@ def send_to_kitchen(tid: int, db: Session = Depends(get_db), user: User = Depend
     """Envía a cocina y barra lo que está sin enviar. Devuelve las comandas agrupadas por estación (a dónde se imprime cada una)."""
     t = _get_tab(db, tid, lock=True)
     _need_open(t)
-    fresh = [ln for ln in t.lines if ln.status == "nueva"]
+    fresh = [ln for ln in t.lines if ln.status == "nueva" and not _is_part(ln)]
     if not fresh:
         raise HTTPException(400, "No hay productos nuevos que enviar")
     now = now_local()
+    for ln in t.lines:  # las partes de un plato dividido salen con su plato: la cocina lo recibe una sola vez
+        if ln.status == "nueva" and _is_part(ln):
+            ln.status, ln.sent_at = "enviada", now
     grouped: dict = {}
     for ln in fresh:
         ln.status, ln.sent_at = "enviada", now
@@ -502,6 +564,155 @@ def update_guests(tid: int, body: GuestsIn, db: Session = Depends(get_db), user:
     if body.guests < used:
         raise HTTPException(400, f"El comensal {used} ya tiene consumos: pásalos a otro antes de bajar a {body.guests}")
     t.guests, t.name = body.guests, body.name.strip()
+    db.commit()
+    return _tab_out(db, t)
+
+
+# ───────────────────────── Dividir la cuenta: reasignar, partir un plato, partes iguales ─────────────────────────
+class GuestAssignIn(BaseModel):
+    line_ids: list[int] = Field(min_length=1, max_length=200)
+    guest: int = Field(ge=1, le=100)
+
+
+@app.post("/api/tabs/{tid}/guest")
+def reassign_guest(tid: int, body: GuestAssignIn, db: Session = Depends(get_db), user: User = Depends(require("mesas"))):
+    """Pasa consumos a otro comensal, incluso después de enviarlos a cocina (no cambia el total de la cuenta, solo quién paga qué). Queda en la bitácora."""
+    t = _get_tab(db, tid, lock=True)
+    _need_open(t)
+    if body.guest > max(t.guests, 1):
+        raise HTTPException(400, f"La cuenta tiene {t.guests} comensal(es): el comensal {body.guest} no existe")
+    wanted = set(body.line_ids)
+    lines = [ln for ln in t.lines if ln.id in wanted]
+    if len(lines) != len(wanted):
+        raise HTTPException(400, "Alguna línea no está en esta cuenta")
+    if any(ln.status not in ACTIVE_LINE for ln in lines):
+        raise HTTPException(400, "Solo se reasignan consumos pendientes de cobro")
+    for ln in lines:
+        ln.guest = body.guest
+    audit(db, user, "Reasignó consumos a un comensal", f"{t.number} · {len(lines)} línea(s) → comensal {body.guest}", "cuenta", t.id)
+    db.commit()
+    return _tab_out(db, t)
+
+
+class SplitPart(BaseModel):
+    guest: int = Field(ge=1, le=100)
+    weight: float = Field(default=1, gt=0, le=1000)  # porciones: con 1 y 2, el segundo paga el doble
+
+
+class SplitIn(BaseModel):
+    parts: list[SplitPart] = Field(min_length=2, max_length=20)
+
+
+def _make_parts(t: Tab, ln: TabLine, cents: list, guests: list):
+    """Convierte `ln` en la primera parte y crea las demás con el mismo plato. Cada parte lleva la fracción exacta de centavos que le toca."""
+    total = sum(cents)
+    ln.group_id = ln.id
+    for i, (c, g) in enumerate(zip(cents, guests)):
+        share = (Decimal(c) / Decimal(total)).quantize(Decimal("0.00000001"), rounding=ROUND_HALF_EVEN)
+        if i == 0:
+            part = ln
+        else:
+            part = TabLine(tab_id=t.id, product_id=ln.product_id, description=ln.description, qty=ln.qty, unit_price=ln.unit_price, station=ln.station, descriptives=ln.descriptives,
+                           note=ln.note, status=ln.status, created_at=ln.created_at, created_by=ln.created_by, sent_at=ln.sent_at, group_id=ln.id)
+            t.lines.append(part)
+        part.share, part.guest = share, g
+
+
+@app.post("/api/tabs/{tid}/lines/{lid}/split")
+def split_line(tid: int, lid: int, body: SplitIn, db: Session = Depends(get_db), user: User = Depends(require("mesas"))):
+    """Parte un plato compartido entre comensales (por ejemplo una entrada para tres). Cada uno paga su parte en su propia factura y el inventario se descuenta en proporción;
+    la cocina sigue recibiendo el plato una sola vez. Los centavos se reparten sin perder ninguno."""
+    t = _get_tab(db, tid, lock=True)
+    _need_open(t)
+    ln = _get_line(db, t, lid)
+    if ln.status not in ACTIVE_LINE:
+        raise HTTPException(400, f"Ese consumo ya está {ln.status}: solo se dividen los pendientes de cobro")
+    if ln.group_id is not None:
+        raise HTTPException(400, "Ese plato ya está dividido: junta sus partes antes de dividirlo de nuevo")
+    for p in body.parts:
+        if p.guest > max(t.guests, 1):
+            raise HTTPException(400, f"La cuenta tiene {t.guests} comensal(es): el comensal {p.guest} no existe")
+    total = _cents(ln)
+    if total < len(body.parts):
+        raise HTTPException(400, "El importe es demasiado pequeño para dividirlo en tantas partes")
+    cents = split_cents(total, [p.weight for p in body.parts])
+    if min(cents) < 1:
+        raise HTTPException(400, "Con esas porciones una parte quedaría en cero: ajusta las porciones")
+    _make_parts(t, ln, cents, [p.guest for p in body.parts])
+    db.flush()
+    audit(db, user, "Dividió un plato entre comensales", f"{t.number} · {ln.description} · {len(body.parts)} partes · L {total / 100:,.2f}", "cuenta", t.id)
+    db.commit()
+    return _tab_out(db, t)
+
+
+class SplitEqualIn(BaseModel):
+    parts: int = Field(ge=2, le=20)
+
+
+@app.post("/api/tabs/{tid}/split-equal")
+def split_equal(tid: int, body: SplitEqualIn, db: Session = Depends(get_db), user: User = Depends(require("mesas"))):
+    """Divide toda la cuenta en partes iguales: cada comensal queda con la misma fracción de cada consumo y se cobra con su propia factura.
+    Los centavos sobrantes se reparten de forma rotativa entre los comensales, así nadie paga de más de forma sistemática."""
+    t = _get_tab(db, tid, lock=True)
+    _need_open(t)
+    active = [ln for ln in t.lines if ln.status in ACTIVE_LINE]
+    if not active:
+        raise HTTPException(400, "No hay consumos que dividir")
+    if any(ln.group_id is not None for ln in active):
+        raise HTTPException(400, "Ya hay platos divididos: junta las partes antes de dividir toda la cuenta")
+    t.guests = max(t.guests, body.parts)
+    n = body.parts
+    for i, ln in enumerate(sorted(active, key=lambda x: x.id)):
+        total = _cents(ln)
+        count = min(n, total)  # un consumo de pocos centavos se reparte entre menos comensales
+        if count < 2:
+            ln.guest = (i % n) + 1
+            continue
+        base, rem = divmod(total, count)
+        offset = i % count  # cada consumo empieza el reparto del centavo sobrante en un comensal distinto
+        cents = [base + (1 if ((g - offset) % count) < rem else 0) for g in range(count)]
+        _make_parts(t, ln, cents, list(range(1, count + 1)))
+    db.flush()
+    audit(db, user, "Dividió la cuenta en partes iguales", f"{t.number} · {n} partes · L {tab_total(t):,.2f}", "cuenta", t.id)
+    db.commit()
+    return _tab_out(db, t)
+
+
+class UnsplitIn(BaseModel):
+    line_id: Optional[int] = None  # vacío = juntar todos los platos divididos de la cuenta
+
+
+@app.post("/api/tabs/{tid}/unsplit")
+def unsplit(tid: int, body: UnsplitIn, db: Session = Depends(get_db), user: User = Depends(require("mesas"))):
+    """Junta las partes de un plato dividido (o de todos) de nuevo en una sola línea. No se puede si ya se cobró alguna parte."""
+    t = _get_tab(db, tid, lock=True)
+    _need_open(t)
+    if body.line_id is not None:
+        target = _get_line(db, t, body.line_id)
+        if target.group_id is None:
+            raise HTTPException(400, "Ese consumo no está dividido")
+        group_ids = {target.group_id}
+    else:
+        group_ids = {ln.group_id for ln in t.lines if ln.group_id is not None and ln.status in ACTIVE_LINE}
+    done = 0
+    for gid in sorted(group_ids):
+        parts = [ln for ln in t.lines if ln.group_id == gid]
+        if any(p.status == "cobrada" for p in parts):
+            if body.line_id is not None:
+                raise HTTPException(400, f"Ya se cobraron partes de «{parts[0].description}»: no se pueden juntar")
+            continue  # al juntar todo se respetan los platos que ya tienen partes cobradas
+        if any(p.status == "anulada" for p in parts):
+            continue
+        head = next((p for p in parts if p.id == gid), parts[0])
+        for p in parts:
+            if p is not head:
+                t.lines.remove(p)
+        head.share, head.group_id = None, None
+        done += 1
+    if not done:
+        raise HTTPException(400, "No hay platos divididos que se puedan juntar")
+    db.flush()
+    audit(db, user, "Juntó las partes de un plato", f"{t.number} · {done} plato(s)", "cuenta", t.id)
     db.commit()
     return _tab_out(db, t)
 
@@ -578,6 +789,10 @@ def transfer_lines(tid: int, body: TransferIn, db: Session = Depends(get_db), us
         raise HTTPException(400, "Alguna línea no está en esta cuenta")
     if any(ln.status not in ACTIVE_LINE for ln in lines):
         raise HTTPException(400, "Solo se transfieren consumos pendientes de cobro")
+    chosen_ids = {ln.id for ln in lines}
+    for ln in lines:
+        if ln.group_id is not None and any(p.id not in chosen_ids for p in _group_of(t, ln)):
+            raise HTTPException(400, f"«{ln.description}» está dividido entre comensales: pasa todas sus partes juntas o júntalas primero")
     if body.to_tab_id:
         dest = _get_tab(db, body.to_tab_id, lock=True)
     else:
@@ -659,7 +874,7 @@ def pay_tab(tid: int, body: PayIn, db: Session = Depends(get_db), user: User = D
         client_id = final.id
     sale = PosSaleIn(client_id=client_id, warehouse_id=t.warehouse_id or _default_warehouse(db, None), series_id=body.series_id, oce_number=body.oce_number,
                      buyer_name=body.buyer_name, buyer_rtn=body.buyer_rtn, payments=body.payments, received=body.received,
-                     items=[ItemIn(product_id=ln.product_id, qty=float(ln.qty), price=float(ln.unit_price)) for ln in chosen])
+                     items=[ItemIn(product_id=ln.product_id, qty=eff_qty(ln), price=float(ln.unit_price)) for ln in chosen])
     doc = _pos_sale(sale, db, user, commit=False, trusted_prices=True)
     for ln in chosen:
         ln.status, ln.document_id = "cobrada", doc["id"]
@@ -687,9 +902,9 @@ def voided_lines(start: Optional[str] = Query(default=None), end: Optional[str] 
             q = q.filter(TabLine.voided_at < datetime.fromisoformat(end).replace(hour=23, minute=59, second=59))
     except ValueError:
         raise HTTPException(400, "Fecha no válida (AAAA-MM-DD)")
-    rows = q.order_by(TabLine.voided_at.desc()).limit(1000).all()
+    rows = [r for r in q.order_by(TabLine.voided_at.desc()).limit(1000).all() if not _is_part(r)]  # un plato dividido sale una sola vez
     tabs = {t.id: t for t in db.query(Tab).filter(Tab.id.in_([r.tab_id for r in rows] or [0])).all()}
-    return {"rows": [{"id": r.id, "tab": tabs[r.tab_id].number, "waiter": tabs[r.tab_id].waiter_name, "description": r.description, "qty": float(r.qty),
-                      "amount": round(float(r.qty) * float(r.unit_price), 2), "voided_at": r.voided_at.isoformat() if r.voided_at else None,
-                      "voided_by": r.voided_by, "reason": r.void_reason} for r in rows],
-            "total": round(sum(float(r.qty) * float(r.unit_price) for r in rows), 2)}
+    amount = lambda r: round(sum(line_amount(p) for p in tabs[r.tab_id].lines if p.group_id == r.group_id), 2) if r.group_id is not None else line_amount(r)
+    out = [{"id": r.id, "tab": tabs[r.tab_id].number, "waiter": tabs[r.tab_id].waiter_name, "description": r.description, "qty": float(r.qty),
+            "amount": amount(r), "voided_at": r.voided_at.isoformat() if r.voided_at else None, "voided_by": r.voided_by, "reason": r.void_reason} for r in rows]
+    return {"rows": out, "total": round(sum(x["amount"] for x in out), 2)}

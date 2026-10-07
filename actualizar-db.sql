@@ -161,6 +161,8 @@ CREATE TABLE IF NOT EXISTS tab_lines (
   voided_by VARCHAR(120), 
   void_reason VARCHAR(200), 
   document_id INTEGER, 
+  share NUMERIC(12, 8), 
+  group_id INTEGER, 
   comanda_id INTEGER, 
   kds_status VARCHAR(12), 
   ready_at DATETIME, 
@@ -398,6 +400,8 @@ CALL comandia_add_column('document_items', 'cost', 'DECIMAL(12,4) NULL');
 CALL comandia_add_column('products', 'kind', 'VARCHAR(12) DEFAULT ''producto''');
 CALL comandia_add_column('products', 'station', 'VARCHAR(20) DEFAULT ''''');
 CALL comandia_add_column('company', 'prices_include_tax', 'INTEGER DEFAULT 0');
+CALL comandia_add_column('tab_lines', 'share', 'DECIMAL(12,8) NULL');
+CALL comandia_add_column('tab_lines', 'group_id', 'INTEGER NULL');
 CALL comandia_add_column('documents', 'buyer_name', 'VARCHAR(180) DEFAULT ''''');
 CALL comandia_add_column('documents', 'buyer_rtn', 'VARCHAR(20) DEFAULT ''''');
 CALL comandia_add_column('cai_ranges', 'received_date', 'DATE NULL');
@@ -443,5 +447,5 @@ SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
    AND ((TABLE_NAME = 'audit_log' AND COLUMN_NAME = 'id')
         OR COLUMN_NAME IN ('ref_document_id', 'user_id', 'user_name', 'price_level', 'price_names', 'price_2', 'price_3', 'price_4',
                            'backup_enabled', 'backup_hour', 'backup_keep', 'backup_dir',
-                           'kind', 'station', 'prices_include_tax', 'exonerated', 'exo_registry', 'sag_registry', 'oce_number', 'smtp_host', 'received_date', 'discount', 'discount_auth', 'auth_pin', 'credit_limit', 'block_overdue', 'credit_auth', 'offline_id', 'install_id'))
+                           'kind', 'station', 'prices_include_tax', 'share', 'group_id', 'exonerated', 'exo_registry', 'sag_registry', 'oce_number', 'smtp_host', 'received_date', 'discount', 'discount_auth', 'auth_pin', 'credit_limit', 'block_overdue', 'credit_auth', 'offline_id', 'install_id'))
  ORDER BY TABLE_NAME, COLUMN_NAME;

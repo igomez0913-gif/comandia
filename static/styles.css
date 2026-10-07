@@ -718,3 +718,9 @@ tr.total-row td { font-weight: 700; background: var(--panel-2, rgba(127,127,127,
 .fi.alta.ocupada .fi-label span { font-size: 12px; }
 .pm-row .pm-extra { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .pm-row .pm-extra.hidden { display: none; }
 .pm-row { padding-bottom: 4px; border-bottom: 1px dashed var(--line); }
+/* dividir la cuenta */
+.tl-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; align-items: center; }
+.guest-sel { height: 30px; width: 64px; padding: 0 6px; font-size: 13px; border-radius: 7px; }
+.tl-sub.part { color: var(--info-fg); font-weight: 600; }
+.split-row { display: grid; grid-template-columns: 1fr 90px 90px; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); padding: 4px 0; } .split-row .sp-amt { text-align: right; color: var(--brand); }
+.pay-more { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; } .pay-equal { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); } .pay-equal input { width: 64px; }

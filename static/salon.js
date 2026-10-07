@@ -148,12 +148,13 @@ function lineRow(t, ln) {
   const [label, cls] = LINE_STATE[ln.status] || [ln.status, ""];
   const fresh = ln.status === "nueva", sent = ln.status === "enviada";
   return `<li class="tline ${ln.status}">
-    <div class="tl-main"><div class="tl-name">${fresh ? `<span class="stepper"><button type="button" data-q="${ln.id}" data-d="-1" aria-label="Menos">−</button><b>${ln.qty}</b><button type="button" data-q="${ln.id}" data-d="1" aria-label="Más">+</button></span>` : `<b>${ln.qty} ×</b>`} ${esc(ln.description)}</div>
+    <div class="tl-main"><div class="tl-name">${fresh && ln.group_id === null ? `<span class="stepper"><button type="button" data-q="${ln.id}" data-d="-1" aria-label="Menos">−</button><b>${ln.qty}</b><button type="button" data-q="${ln.id}" data-d="1" aria-label="Más">+</button></span>` : `<b>${ln.qty} ×</b>`} ${esc(ln.description)}</div>
       ${ln.descriptives ? `<div class="tl-sub">+ ${esc(ln.descriptives)}</div>` : ""}${ln.note ? `<div class="tl-sub note">“${esc(ln.note)}”</div>` : ""}
+      ${ln.group_id !== null && ln.status !== "anulada" ? `<div class="tl-sub part">Plato compartido · parte ${esc(ln.portion)}</div>` : ""}
       ${ln.status === "anulada" ? `<div class="tl-sub">Anulada: ${esc(ln.void_reason)}</div>` : ""}</div>
     <div class="tl-side"><span class="tl-price">${money(ln.total)}</span>
       <span class="pill ${cls}">${sent && ln.kds ? esc(KDS_LABEL[ln.kds] || label) : label}</span>
-      <span class="tl-actions">${fresh ? `<button type="button" class="btn ghost sm" data-note="${ln.id}">Nota</button><button type="button" class="btn ghost sm" data-del="${ln.id}">Quitar</button>` : ""}${sent ? `<button type="button" class="btn ghost sm" data-void="${ln.id}">Anular</button>` : ""}</span></div></li>`;
+      <span class="tl-actions">${(fresh || sent) && t.guests > 1 ? `<select class="guest-sel" data-guest="${ln.id}" aria-label="Comensal de este consumo">${Array.from({ length: t.guests }, (_, i) => `<option value="${i + 1}" ${ln.guest === i + 1 ? "selected" : ""}>C${i + 1}</option>`).join("")}</select>` : ""}${(fresh || sent) && t.guests > 1 ? (ln.group_id === null ? `<button type="button" class="btn ghost sm" data-split="${ln.id}" title="Compartir entre varios comensales">Dividir</button>` : `<button type="button" class="btn ghost sm" data-join="${ln.id}" title="Volver a dejarlo en una sola línea">Juntar</button>`) : ""}${fresh ? `<button type="button" class="btn ghost sm" data-note="${ln.id}">Nota</button><button type="button" class="btn ghost sm" data-del="${ln.id}">Quitar</button>` : ""}${sent ? `<button type="button" class="btn ghost sm" data-void="${ln.id}">Anular</button>` : ""}</span></div></li>`;
 }
 
 function tabPanelHtml() {
@@ -181,6 +182,8 @@ function tabPanelHtml() {
         <button type="button" data-more="move">Cambiar de mesa</button><button type="button" data-more="merge">Unir con otra cuenta</button>
         <button type="button" data-more="transfer" ${t.lines_count ? "" : "disabled"}>Pasar consumos a otra mesa</button>
         <button type="button" data-more="guests">Comensales y nombre</button>
+        <button type="button" data-more="equal" ${t.lines_count ? "" : "disabled"}>Dividir la cuenta en partes iguales</button>
+        ${t.lines.some((l) => l.group_id !== null && ["nueva", "enviada"].includes(l.status)) ? `<button type="button" data-more="unsplit">Juntar los platos divididos</button>` : ""}
         <button type="button" data-more="empty" ${t.lines.some((l) => ["nueva", "enviada", "cobrada"].includes(l.status)) ? "disabled" : ""}>Cerrar cuenta vacía</button></div></details></div>`;
 }
 
@@ -210,9 +213,12 @@ function bindSalon() {
   $$("[data-q]", root).forEach((b) => b.onclick = () => { const ln = t.lines.find((l) => l.id === +b.dataset.q); const qty = Math.max(0, ln.qty + +b.dataset.d); salonAct(() => qty === 0 ? api(`/api/tabs/${t.id}/lines/${ln.id}/void`, { method: "POST", body: {} }) : api(`/api/tabs/${t.id}/lines/${ln.id}`, { method: "PUT", body: { qty } })); });
   $$("[data-del]", root).forEach((b) => b.onclick = () => salonAct(() => api(`/api/tabs/${t.id}/lines/${b.dataset.del}/void`, { method: "POST", body: {} })));
   $$("[data-note]", root).forEach((b) => b.onclick = () => noteModal(t.lines.find((l) => l.id === +b.dataset.note)));
+  $$("[data-guest]", root).forEach((sel) => sel.onchange = () => salonAct(() => api(`/api/tabs/${t.id}/guest`, { method: "POST", body: { line_ids: [+sel.dataset.guest], guest: +sel.value } })));
+  $$("[data-split]", root).forEach((b) => b.onclick = () => splitModal(t.lines.find((l) => l.id === +b.dataset.split)));
+  $$("[data-join]", root).forEach((b) => b.onclick = () => salonAct(() => api(`/api/tabs/${t.id}/unsplit`, { method: "POST", body: { line_id: +b.dataset.join } }), "Partes juntadas"));
   $$("[data-void]", root).forEach((b) => b.onclick = () => voidModal(t.lines.find((l) => l.id === +b.dataset.void)));
   if ($("#t-send")) $("#t-send").onclick = sendOrder;
-  if ($("#t-pay")) $("#t-pay").onclick = payModal;
+  if ($("#t-pay")) $("#t-pay").onclick = () => payModal();
   $$("[data-more]", root).forEach((b) => b.onclick = () => { $(".more")?.removeAttribute("open"); moreAction(b.dataset.more); });
 }
 function keepMenuOpen(onlyGrid = false) {
@@ -292,6 +298,8 @@ async function moreAction(kind) {
   if (kind === "empty") { if (await askConfirm("¿Cerrar esta cuenta vacía y liberar la mesa?", "Cerrar cuenta")) { await salonAct(() => api(`/api/tabs/${t.id}/close-empty`, { method: "POST" }), "Cuenta cerrada"); SALON.tab = null; paintSalon(); } return; }
   if (kind === "guests") return openModal("Comensales y nombre", [{ name: "guests", label: "Comensales", type: "number", value: t.guests, min: 1, max: 100, required: true }, { name: "name", label: "A nombre de", value: t.name }], async (b) => {
     await api(`/api/tabs/${t.id}/guests`, { method: "PUT", body: { guests: +b.guests, name: b.name } }); await refreshSalon(); return "stay"; });
+  if (kind === "equal") return splitEqualModal();
+  if (kind === "unsplit") { if (await askConfirm("¿Juntar de nuevo todos los platos divididos? Los que ya tengan partes cobradas se dejan como están.", "Juntar")) await salonAct(() => api(`/api/tabs/${t.id}/unsplit`, { method: "POST", body: {} }), "Platos juntados"); return; }
   const salon = currentSalon();
   const free = salon.items.filter((i) => i.kind === "mesa" && (!i.tab || i.tab.id === t.id));
   if (kind === "move") return openModal("Cambiar de mesa", [{ type: "info", html: "Elige la mesa (o varias, separadas) a la que pasa la cuenta. La anterior queda libre." },
@@ -313,8 +321,49 @@ async function moreAction(kind) {
   }
 }
 
+/* ───────── dividir la cuenta ───────── */
+/** Reparte centavos según pesos (mayor residuo), igual que el servidor: solo para mostrar de antemano cuánto toca a cada quien. */
+function splitCents(total, weights) {
+  const sum = weights.reduce((a, b) => a + b, 0), exact = weights.map((w) => (total * w) / sum), base = exact.map(Math.floor);
+  let extra = total - base.reduce((a, b) => a + b, 0);
+  exact.map((e, i) => [e - base[i], i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).slice(0, extra).forEach(([, i]) => { base[i] += 1; });
+  return base;
+}
+
+function splitModal(ln) {
+  const t = SALON.tab, guests = Math.max(t.guests, 1), total = Math.round(ln.qty * ln.unit_price * 100);
+  openForm(`Compartir · ${ln.qty} × ${ln.description}`, `
+    <p class="full muted small">Cada comensal paga su parte con su propia factura. La cocina sigue recibiendo el plato una sola vez. Con «porciones» puedes repartir desigual (1 y 2: el segundo paga el doble).</p>
+    <div class="full" id="sp-rows">${Array.from({ length: guests }, (_, i) => `<div class="split-row"><label class="check-row"><input type="checkbox" data-sg="${i + 1}" ${i < Math.min(guests, 2) || guests <= 3 ? "checked" : ""} /> Comensal ${i + 1}</label><input type="number" min="0.5" max="1000" step="0.5" value="1" data-sw="${i + 1}" aria-label="Porciones del comensal ${i + 1}" /><b class="sp-amt" data-sa="${i + 1}"></b></div>`).join("")}</div>
+    <div class="full muted small" id="sp-total">Total del plato: ${money(total / 100)}</div>`,
+  async (form) => {
+    const parts = $$("[data-sg]:checked", form).map((c) => ({ guest: +c.dataset.sg, weight: +$(`[data-sw="${c.dataset.sg}"]`, form).value || 1 }));
+    if (parts.length < 2) throw new Error("Marca al menos dos comensales");
+    await api(`/api/tabs/${t.id}/lines/${ln.id}/split`, { method: "POST", body: { parts } }); toast("Plato dividido"); await refreshSalon(); return "stay";
+  }, { submitLabel: "Dividir el plato", mount: (form) => {
+    const calc = () => {
+      const on = $$("[data-sg]:checked", form).map((c) => +c.dataset.sg), w = on.map((g) => +$(`[data-sw="${g}"]`, form).value || 1);
+      const cents = on.length >= 2 ? splitCents(total, w) : [];
+      $$("[data-sa]", form).forEach((el) => { const i = on.indexOf(+el.dataset.sa); el.textContent = i >= 0 && cents.length ? money(cents[i] / 100) : "—"; });
+    };
+    $$("[data-sg], [data-sw]", form).forEach((c) => { c.oninput = c.onchange = calc; }); calc();
+  } });
+}
+
+function splitEqualModal() {
+  const t = SALON.tab, total = t.total;
+  openModal("Dividir la cuenta en partes iguales", [
+    { type: "info", html: `Cada comensal queda con la <strong>misma parte de cada consumo</strong> (${money(total)} entre N) y se cobra con su propia factura. Se pierde la asignación de comensales actual; puedes deshacerlo con «Juntar los platos divididos».` },
+    { name: "parts", label: "¿Entre cuántas personas?", type: "number", value: Math.max(t.guests, 2), min: 2, max: 20, required: true, full: true },
+  ], async (b) => {
+    const n = Math.max(2, Math.min(20, +b.parts || 2));
+    await api(`/api/tabs/${t.id}/split-equal`, { method: "POST", body: { parts: n } });
+    toast(`Cuenta dividida en ${n} partes iguales (≈ ${money(total / n)} cada una). Cobra comensal por comensal.`); await refreshSalon(); return "stay";
+  }, { submitLabel: "Dividir" });
+}
+
 /* ───────── cobro ───────── */
-async function payModal() {
+async function payModal(opts = {}) {
   const t = SALON.tab;
   const pending = t.lines.filter((l) => ["nueva", "enviada"].includes(l.status));
   if (pending.some((l) => l.status === "nueva")) return toast("Hay productos sin enviar a cocina: envíalos o quítalos antes de cobrar", "err");
@@ -331,7 +380,8 @@ async function payModal() {
     <div class="full pay-total"><span>A cobrar</span><strong id="pay-total">${money(0)}</strong></div>
     <div class="full pay-tip"><span>Propina</span>${[0, 10, 15, 20].map((p) => `<button type="button" class="tab-chip ${p === tipPct ? "on" : ""}" data-tip="${p}">${p === 0 ? "Sin" : p + "%"}</button>`).join("")}<input id="tip" name="tip" type="number" min="0" step="0.01" value="0" aria-label="Propina en lempiras" /><select name="tip_method">${["Efectivo", "Tarjeta", "Transferencia"].map((m) => `<option>${m}</option>`).join("")}</select></div>
     <div class="full pay-methods" id="pay-methods"></div>
-    <div class="full"><button type="button" class="btn ghost sm" id="pay-split">Dividir el pago en otra forma</button></div>
+    <div class="full pay-more"><button type="button" class="btn ghost sm" id="pay-split">Otra forma de pago</button>
+      <span class="pay-equal">o repartir el pago entre <input id="pay-n" type="number" min="2" max="8" value="2" aria-label="Personas que pagan" /> personas <button type="button" class="btn sm" id="pay-eq">Repartir</button></span></div>
     <label class="full cash-recv">Efectivo recibido<input id="recv" name="received" type="number" min="0" step="0.01" placeholder="Opcional: para calcular el cambio" /></label>
     <div class="full pay-change" id="pay-change"></div>
     <details class="full"><summary>Factura a nombre de…</summary><div class="form" style="margin-top:8px">
@@ -347,8 +397,14 @@ async function payModal() {
     try { localStorage.setItem("comandia_tip_pct", $(".pay-tip .on")?.dataset.tip || "0"); } catch (e) { /* nada */ }
     toast(r.closed ? `Cuenta cobrada · ${r.document.number}${r.document.change ? ` · cambio ${money(r.document.change)}` : ""}` : `Cobro parcial · ${r.document.number}`);
     if (pref === "carta") safePrint(printDoc, r.document.id); else if (pref === "ticket") safePrint(printTicket, r.document.id);
-    SALON.tab = r.closed ? null : r.tab; await refreshSalon(); return "stay";
-  }, { wide: true, submitLabel: "Cobrar", mount: (form) => payMount(form, t, tipPct, banks) });
+    SALON.tab = r.closed ? null : r.tab; await refreshSalon();
+    if (!r.closed && scope === "guest") {  // cobrado un comensal: se ofrece seguir con el siguiente
+      const left = [...new Set(r.tab.lines.filter((l) => ["nueva", "enviada"].includes(l.status)).map((l) => l.guest))].sort((a, b) => a - b);
+      const next = left.find((g) => g > +f.guest) ?? left[0];
+      if (next) setTimeout(async () => { if (await askConfirm(`Comensal ${f.guest} cobrado. Quedan por cobrar: ${left.map((g) => "comensal " + g).join(", ")}. ¿Cobrar ahora al comensal ${next}?`, `Cobrar comensal ${next}`)) payModal({ guest: next }); }, 250);
+    }
+    return "stay";
+  }, { wide: true, submitLabel: "Cobrar", mount: (form) => payMount(form, t, tipPct, banks, opts) });
 }
 
 function methodRows(form) {
@@ -357,7 +413,7 @@ function methodRows(form) {
     return { method, amount: +$("input", r).value || 0, bank_id: card && bank ? +bank : null, note: card ? ($(".pm-ref", r)?.value || "").trim() : "" };
   }).filter((p) => p.amount > 0);
 }
-function payMount(form, t, tipPct, banks = []) {
+function payMount(form, t, tipPct, banks = [], opts = {}) {
   const rows = $("#pay-methods", form);
   const remembered = (m) => { try { return localStorage.getItem("comandia_bank_" + m) || ""; } catch (e) { return ""; } };
   const addRow = (method, amount) => {
@@ -404,6 +460,11 @@ function payMount(form, t, tipPct, banks = []) {
   $("#recv", form).oninput = recalcChange;
   $$("[data-tip]", form).forEach((b) => b.onclick = () => { $$("[data-tip]", form).forEach((x) => x.classList.toggle("on", x === b)); recalcTotal(); });
   $("#tip", form).oninput = () => { $$("[data-tip]", form).forEach((x) => x.classList.remove("on")); };
-  $("#pay-split", form).onclick = () => { if (rows.children.length < 4) { addRow("Tarjeta", 0); recalcChange(); } };
+  $("#pay-split", form).onclick = () => { if (rows.children.length < 8) { addRow("Tarjeta", 0); recalcChange(); } };
+  $("#pay-eq", form).onclick = () => {  // reparte el total entre N personas, con los centavos sobrantes a las primeras
+    const n = Math.max(2, Math.min(8, +$("#pay-n", form).value || 2)), cents = splitCents(Math.round(total() * 100), Array(n).fill(1));
+    rows.innerHTML = ""; cents.forEach((c) => addRow("Efectivo", (c / 100).toFixed(2))); recalcChange();
+  };
+  if (opts.guest && $(`[name=guest] option[value="${opts.guest}"]`, form)) { $("[name=scope][value=guest]", form).checked = true; $("[name=guest]", form).value = String(opts.guest); }
   applyScope();
 }

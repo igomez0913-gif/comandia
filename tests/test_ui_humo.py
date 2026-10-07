@@ -180,6 +180,100 @@ def test_cobro_mixto_con_cuenta_de_banco_desde_la_pantalla(server, browser):
     assert pg.errors == []
 
 
+def _abrir_cuenta(pg, mesa, comensales):
+    pg.click(f'.fi.mesa[data-table]:has(strong:text-is("{mesa}"))')
+    pg.wait_for_selector("#modal.open")
+    pg.fill("input[name=guests]", str(comensales))
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_selector(".tab-head")
+
+
+def _agregar(pg, familia, producto):
+    pg.click(f'.menu-deps [data-dep]:has-text("{familia}")')
+    pg.click(f'.menu-item:has-text("{producto}")')
+    pg.wait_for_selector("#modal.open")
+    pg.click("#modal-form button[type=submit]")  # sin descriptivos: se agrega tal cual
+    pg.wait_for_selector(f'.tline:has-text("{producto}")')
+
+
+def test_dividir_un_plato_reasignar_comensal_y_cobrar_uno_por_uno(server, browser):
+    pg = _page(browser)
+    _login(pg, server)
+    pg.click('[data-view="salon"]')
+    pg.wait_for_selector(".fi.mesa")
+    _abrir_cuenta(pg, "4", 3)
+    _agregar(pg, "Entradas", "Alitas BBQ")  # L 165
+    _agregar(pg, "Bebidas", "Refresco")  # L 35
+    pg.click("#t-send")
+    pg.wait_for_selector(".pill:has-text('Esperando')")
+    # el plato se comparte entre los tres comensales aunque ya está en cocina
+    pg.click('.tline:has-text("Alitas BBQ") [data-split]')
+    pg.wait_for_selector("#modal.open .split-row")
+    assert "55.00" in pg.inner_text("#modal .split-row >> nth=0")  # 165 entre 3, con el reparto a la vista antes de confirmar
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_selector(".tl-sub.part")
+    assert pg.locator(".tl-sub.part").count() == 3 and "1/3" in pg.inner_text(".tl-sub.part >> nth=0")
+    # el refresco pasa al comensal 2 aunque ya se envió
+    pg.select_option('.tline:has-text("Refresco") .guest-sel', "2")
+    pg.wait_for_selector('.guest-head:has-text("Comensal 2"):has-text("90.00")')  # 55 de su parte de las alitas + 35 del refresco
+    # se cobra comensal por comensal y el sistema ofrece seguir con el siguiente
+    pg.click("#t-pay")
+    pg.wait_for_selector("#pay-methods .pm-row")
+    pg.click("input[name=scope][value=guest]")
+    pg.select_option("select[name=guest]", "1")
+    pg.wait_for_timeout(150)
+    assert pg.inner_text("#pay-total").replace("\u00a0", " ") == "L 55.00"
+    pg.click("#modal-form button[type=submit]")
+    for guest, total in ((2, "L 90.00"), (3, "L 55.00")):
+        pg.wait_for_selector("#cf-yes")
+        assert f"comensal {guest}" in pg.inner_text("#modal-form").lower()
+        pg.click("#cf-yes")
+        pg.wait_for_selector("#pay-methods .pm-row")
+        if guest == 2:  # con dos comensales por cobrar ya viene seleccionado el que sigue; cuando solo queda uno, «toda la cuenta» es ese comensal
+            assert pg.is_checked("input[name=scope][value=guest]") and pg.input_value("select[name=guest]") == str(guest)
+        pg.wait_for_timeout(150)
+        assert pg.inner_text("#pay-total").replace("\u00a0", " ") == total
+        pg.click("#modal-form button[type=submit]")
+    pg.wait_for_timeout(1200)
+    assert pg.locator('.fi.mesa.ocupada:has(strong:text-is("4"))').count() == 0  # cuenta cerrada y mesa libre
+    assert pg.errors == []
+
+
+def test_dividir_toda_la_cuenta_y_repartir_el_pago_entre_dos(server, browser):
+    pg = _page(browser)
+    _login(pg, server)
+    pg.click('[data-view="salon"]')
+    pg.wait_for_selector(".fi.mesa")
+    _abrir_cuenta(pg, "5", 2)
+    pg.click('.menu-deps [data-dep]:has-text("Hamburguesas")')
+    pg.click('.menu-item:has-text("Hamburguesa clásica")')
+    pg.wait_for_selector("#modal.open")
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_selector('.tline:has-text("Hamburguesa clásica")')
+    _agregar(pg, "Bebidas", "Refresco")
+    pg.click("#t-send")
+    pg.wait_for_selector(".pill:has-text('Esperando')")
+    pg.click(".more > summary")
+    pg.click('[data-more="equal"]')
+    pg.wait_for_selector("#modal.open input[name=parts]")
+    pg.fill("input[name=parts]", "2")
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_selector(".guest-head >> nth=1")
+    heads = pg.locator(".guest-head").all_inner_texts()
+    assert len(heads) == 2 and all("85.00" in h for h in heads)  # L 170 entre dos: L 85 cada uno
+    # un solo comprobante pagado entre dos personas: el pago se reparte en dos filas iguales
+    pg.click("#t-pay")
+    pg.wait_for_selector("#pay-methods .pm-row")
+    pg.fill("#pay-n", "2")
+    pg.click("#pay-eq")
+    pg.wait_for_timeout(150)
+    assert pg.locator(".pm-row").count() == 2 and [pg.input_value(f".pm-row:nth-child({i}) input[type=number]") for i in (1, 2)] == ["85.00", "85.00"]
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_timeout(1200)
+    assert pg.locator('.fi.mesa.ocupada:has(strong:text-is("5"))').count() == 0
+    assert pg.errors == []
+
+
 def test_disenar_el_plano_arrastrar_y_guardar(server, browser):
     pg = _page(browser)
     _login(pg, server)
