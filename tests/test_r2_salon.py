@@ -416,3 +416,31 @@ def test_formas_de_mesa_y_puerta_se_aceptan_y_las_demas_no(client, auth, rest):
         assert forma(shape).status_code == 200, shape
     assert forma("rectangular", "puerta", "").status_code == 200  # la puerta es un elemento más del plano
     assert forma("hexagonal").status_code == 400
+
+
+def test_pago_mixto_efectivo_tarjeta_y_transferencia_con_cuentas_de_banco(client, auth, rest):
+    banks = client.get("/api/banks/accounts", headers=auth).json()
+    atlantida, banpais = banks[0]["id"], banks[1]["id"]
+    saldo = lambda: {b["id"]: b["balance"] for b in client.get("/api/banks", headers=auth).json()["banks"]}
+    antes = saldo()
+    t = open_tab(client, auth, rest)
+    add(client, auth, t, rest["burger"], 3)  # L 300
+    client.post(f"/api/tabs/{t['id']}/send", headers=auth)
+    pagos = [{"method": "Efectivo", "amount": 100}, {"method": "Tarjeta", "amount": 120, "bank_id": atlantida, "note": "Aut. 884211"},
+             {"method": "Transferencia", "amount": 80, "bank_id": banpais, "note": "Ref. 5521"}]
+    r = client.post(f"/api/tabs/{t['id']}/pay", json={"payments": pagos, "received": 100, "tip": 30, "tip_method": "Tarjeta"}, headers=auth)
+    assert r.status_code == 200, r.text
+    doc = r.json()["document"]
+    assert [p["method"] for p in doc["payments"]] == ["Efectivo", "Tarjeta", "Transferencia"] and doc["status"] == "Pagada" and r.json()["closed"] is True
+    despues = saldo()
+    assert round(despues[atlantida] - antes[atlantida], 2) == 120 and round(despues[banpais] - antes[banpais], 2) == 80  # lo electrónico entra a su cuenta; el efectivo no
+    assert any("Aut. 884211" in (p.get("note") or "") for p in doc["payments"])
+    # los pagos que no suman el total se rechazan sin dejar nada a medias
+    t2 = open_tab(client, auth, rest, "2")
+    add(client, auth, t2, rest["cola"], 2)  # L 60
+    client.post(f"/api/tabs/{t2['id']}/send", headers=auth)
+    mal = client.post(f"/api/tabs/{t2['id']}/pay", json={"payments": [{"method": "Efectivo", "amount": 30}, {"method": "Tarjeta", "amount": 20, "bank_id": atlantida}]}, headers=auth)
+    assert mal.status_code == 400 and "Falta" in mal.json()["detail"]
+    assert saldo() == despues and client.get(f"/api/tabs/{t2['id']}", headers=auth).json()["status"] == "Abierta"
+    # una cuenta de banco que no existe también se rechaza
+    assert client.post(f"/api/tabs/{t2['id']}/pay", json={"payments": [{"method": "Tarjeta", "amount": 60, "bank_id": 99999}]}, headers=auth).status_code == 400

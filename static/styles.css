@@ -647,7 +647,7 @@ tr.total-row td { font-weight: 700; background: var(--panel-2, rgba(127,127,127,
 .pay-scope { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; } .pay-lines.dim { opacity: .55; }
 .pay-total { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; border-top: 2px solid var(--line-strong); padding-top: 10px; } .pay-total strong { font-size: 30px; color: var(--brand); }
 .pay-tip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .pay-tip input { width: 100px; } .pay-tip > span { font-weight: 600; margin-right: 4px; }
-.pm-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-bottom: 6px; } .pay-change { min-height: 24px; font-size: 15px; } .bad { color: var(--bad-fg); }
+.pm-row { display: grid; grid-template-columns: 1fr 1fr 36px; gap: 8px; margin-bottom: 6px; } .pay-change { min-height: 24px; font-size: 15px; } .bad { color: var(--bad-fg); }
 .warn-note { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 14px; }
 .plano-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; } .plano-side { display: flex; flex-direction: column; gap: 12px; }
 .palette { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .palette strong { width: 100%; }
@@ -716,3 +716,5 @@ tr.total-row td { font-weight: 700; background: var(--panel-2, rgba(127,127,127,
 .pv-mobiliario:not(:has(svg))::after { content: ""; position: absolute; left: 10px; right: 10px; top: 18px; height: 20px; background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: 4px; }
 .fi.cabina.ocupada .fi-label small, .fi.alta.ocupada .fi-label small { display: none; }  /* la mesa es angosta: se muestra solo el número y el total */
 .fi.alta.ocupada .fi-label span { font-size: 12px; }
+.pm-row .pm-extra { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .pm-row .pm-extra.hidden { display: none; }
+.pm-row { padding-bottom: 4px; border-bottom: 1px dashed var(--line); }

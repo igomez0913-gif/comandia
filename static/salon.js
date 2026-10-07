@@ -314,7 +314,7 @@ async function moreAction(kind) {
 }
 
 /* ───────── cobro ───────── */
-function payModal() {
+async function payModal() {
   const t = SALON.tab;
   const pending = t.lines.filter((l) => ["nueva", "enviada"].includes(l.status));
   if (pending.some((l) => l.status === "nueva")) return toast("Hay productos sin enviar a cocina: envíalos o quítalos antes de cobrar", "err");
@@ -322,6 +322,7 @@ function payModal() {
   const pref = (() => { try { return localStorage.getItem("comandia_pos_print") || "ticket"; } catch (e) { return "ticket"; } })();
   const tipPct = (() => { try { return +localStorage.getItem("comandia_tip_pct") || 10; } catch (e) { return 10; } })();
   const clients = SALON.clients;
+  const banks = can("cobrar") ? await api("/api/banks/accounts").catch(() => []) : [];  // cuentas donde puede entrar lo cobrado con tarjeta o transferencia
   openForm(`Cobrar ${t.number} · Mesa ${t.tables.map((x) => x.name).join(" + ") || "—"}`, `
     <div class="full pay-scope"><label><input type="radio" name="scope" value="all" checked /> Toda la cuenta</label>
       ${guestNums.length > 1 ? `<label><input type="radio" name="scope" value="guest" /> Un comensal <select name="guest">${guestNums.map((g) => `<option value="${g}">Comensal ${g}</option>`).join("")}</select></label>` : ""}
@@ -347,20 +348,33 @@ function payModal() {
     toast(r.closed ? `Cuenta cobrada · ${r.document.number}${r.document.change ? ` · cambio ${money(r.document.change)}` : ""}` : `Cobro parcial · ${r.document.number}`);
     if (pref === "carta") safePrint(printDoc, r.document.id); else if (pref === "ticket") safePrint(printTicket, r.document.id);
     SALON.tab = r.closed ? null : r.tab; await refreshSalon(); return "stay";
-  }, { wide: true, submitLabel: "Cobrar", mount: (form) => payMount(form, t, tipPct) });
+  }, { wide: true, submitLabel: "Cobrar", mount: (form) => payMount(form, t, tipPct, banks) });
 }
 
 function methodRows(form) {
-  return $$(".pm-row", form).map((r) => ({ method: $("select", r).value, amount: +$("input", r).value || 0 })).filter((p) => p.amount > 0);
+  return $$(".pm-row", form).map((r) => {
+    const method = $("select", r).value, card = method !== "Efectivo", bank = $(".pm-bank", r)?.value;
+    return { method, amount: +$("input", r).value || 0, bank_id: card && bank ? +bank : null, note: card ? ($(".pm-ref", r)?.value || "").trim() : "" };
+  }).filter((p) => p.amount > 0);
 }
-function payMount(form, t, tipPct) {
+function payMount(form, t, tipPct, banks = []) {
   const rows = $("#pay-methods", form);
+  const remembered = (m) => { try { return localStorage.getItem("comandia_bank_" + m) || ""; } catch (e) { return ""; } };
   const addRow = (method, amount) => {
     const d = document.createElement("div"); d.className = "pm-row";
-    d.innerHTML = `<select aria-label="Forma de pago">${["Efectivo", "Tarjeta", "Transferencia"].map((m) => `<option ${m === method ? "selected" : ""}>${m}</option>`).join("")}</select><input type="number" min="0" step="0.01" value="${amount}" aria-label="Monto" />${rows.children.length ? `<button type="button" class="btn ghost sm" aria-label="Quitar">✕</button>` : ""}`;
+    d.innerHTML = `<select aria-label="Forma de pago">${["Efectivo", "Tarjeta", "Transferencia"].map((m) => `<option ${m === method ? "selected" : ""}>${m}</option>`).join("")}</select><input type="number" min="0" step="0.01" value="${amount}" aria-label="Monto" />${rows.children.length ? `<button type="button" class="btn ghost sm" aria-label="Quitar">✕</button>` : `<span></span>`}
+      <div class="pm-extra hidden">${banks.length ? `<select class="pm-bank" aria-label="Cuenta donde entra"><option value="">Sin registrar en bancos</option>${banks.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join("")}</select>` : ""}<input class="pm-ref" maxlength="120" placeholder="Autorización o referencia (opcional)" autocomplete="off" /></div>`;
     rows.appendChild(d);
-    $("input", d).oninput = recalcChange; $("select", d).onchange = recalcChange;
+    const sel = $("select", d), extra = $(".pm-extra", d), bank = $(".pm-bank", d);
+    const sync = () => {  // tarjeta y transferencia piden cuenta y referencia; el efectivo no
+      const card = sel.value !== "Efectivo"; extra.classList.toggle("hidden", !card);
+      if (card && bank && !bank.dataset.touched) bank.value = banks.some((b) => String(b.id) === remembered(sel.value)) ? remembered(sel.value) : "";
+      recalcChange();
+    };
+    $("input", d).oninput = recalcChange; sel.onchange = sync;
+    if (bank) bank.onchange = () => { bank.dataset.touched = "1"; try { localStorage.setItem("comandia_bank_" + sel.value, bank.value); } catch (e) { /* nada */ } };
     const x = $("button", d); if (x) x.onclick = () => { d.remove(); recalcTotal(); };
+    sync();
   };
   const chosen = () => $$("[name=l]", form).filter((c) => c.checked);
   const total = () => chosen().reduce((s, c) => s + +c.dataset.t, 0);

@@ -145,6 +145,41 @@ def test_un_servicio_completo_desde_la_pantalla(server, browser):
     assert pg.errors == []
 
 
+def test_cobro_mixto_con_cuenta_de_banco_desde_la_pantalla(server, browser):
+    pg = _page(browser)
+    _login(pg, server)
+    pg.click('[data-view="salon"]')
+    pg.wait_for_selector(".fi.mesa")
+    pg.click('.fi.mesa[data-table]:has(strong:text-is("1"))')
+    pg.wait_for_selector("#modal.open")
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_selector(".tab-head")
+    pg.click('.menu-deps [data-dep]:has-text("Hamburguesas")')
+    pg.click('.menu-item:has-text("Hamburguesa clásica")')
+    pg.wait_for_selector("#modal.open")
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_selector(".tline")
+    pg.click("#t-send")
+    pg.wait_for_selector(".pill:has-text('Esperando')")
+    pg.click("#t-pay")
+    pg.wait_for_selector("#pay-methods .pm-row")
+    assert pg.locator(".pm-row .pm-extra:not(.hidden)").count() == 0  # el efectivo no pide cuenta ni referencia
+    pg.click("#pay-split")  # segunda forma de pago: tarjeta
+    pg.fill(".pm-row:nth-child(1) input[type=number]", "35")
+    pg.fill(".pm-row:nth-child(2) input[type=number]", "100")
+    assert pg.locator(".pm-row:nth-child(2) .pm-extra:not(.hidden)").count() == 1  # la tarjeta sí
+    pg.select_option(".pm-row:nth-child(2) .pm-bank", label="Banco (tarjetas y transferencias)")
+    pg.fill(".pm-row:nth-child(2) .pm-ref", "Aut 4471")
+    pg.wait_for_timeout(150)
+    assert "Falta" not in pg.inner_text("#pay-change") and "Sobra" not in pg.inner_text("#pay-change")  # 35 + 100 = 135
+    pg.click("#modal-form button[type=submit]")
+    pg.wait_for_timeout(1500)
+    token = _api(server, "/api/auth/login", {"email": "luis@miempresa.hn", "password": "comandia123"})["token"]
+    bancos = {b["name"]: b["balance"] for b in _api(server, "/api/banks", token=token)["banks"]}
+    assert bancos["Banco (tarjetas y transferencias)"] == 100.0 and bancos["Caja general"] == 0.0  # solo lo electrónico entra al banco
+    assert pg.errors == []
+
+
 def test_disenar_el_plano_arrastrar_y_guardar(server, browser):
     pg = _page(browser)
     _login(pg, server)
